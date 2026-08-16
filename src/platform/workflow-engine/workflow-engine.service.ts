@@ -92,6 +92,51 @@ export class WorkflowEngineService {
     return doc;
   }
 
+  /**
+   * Unlike `registerChainConfig` (idempotent, insert-only — `$setOnInsert`
+   * protects an Admin's later manual chain edits from being clobbered on
+   * every boot), this ALWAYS overwrites the stored `steps`/`restartOnReturn`
+   * for `(entityType, action)`, creating the config if it doesn't exist yet.
+   * For a chain whose *shape* is itself admin-configurable data living in a
+   * domain document (e.g. `LoanProduct.approvalChainSteps` — see
+   * `modules/loan-products/loan-products.service.ts`, PHASE_7_NOTES.md),
+   * there's no independent "manual edit" to protect: the domain document
+   * already is the source of truth, and re-deriving the chain config from
+   * it on every approved product create/update is exactly the intended
+   * behavior, not a clobber risk.
+   *
+   * Existing `WorkflowRequest`s are unaffected either way — `initiate()`
+   * snapshots `steps` onto the request at creation time (see below), so a
+   * request already in flight keeps acting on whatever chain shape was
+   * current when it started, never the live chain config.
+   */
+  async replaceChainConfig(config: RegisterChainConfigInput): Promise<WorkflowChainConfigDocument> {
+    this.validateSteps(config.steps);
+
+    const doc = await this.chainConfigModel
+      .findOneAndUpdate(
+        { entityType: config.entityType, action: config.action },
+        {
+          $set: {
+            entityType: config.entityType,
+            action: config.action,
+            restartOnReturn: config.restartOnReturn,
+            steps: config.steps,
+            isActive: true,
+          },
+        },
+        { upsert: true, new: true },
+      )
+      .exec();
+
+    if (!doc) {
+      throw new Error(
+        `Failed to upsert (replace) WorkflowChainConfig for ${config.entityType}:${config.action}`,
+      );
+    }
+    return doc;
+  }
+
   private validateSteps(steps: { order: number }[]): void {
     if (steps.length === 0) {
       throw new BadRequestException('A workflow chain must have at least one step');

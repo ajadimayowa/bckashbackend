@@ -15,6 +15,7 @@ import { BranchesModule } from './modules/branches/branches.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { LoanProductsModule } from './modules/loan-products/loan-products.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { IdentityModule } from './modules/identity/identity.module';
     BranchesModule,
     CustomersModule,
     GroupsModule,
+    LoanProductsModule,
   ],
   controllers: [HealthController],
 })

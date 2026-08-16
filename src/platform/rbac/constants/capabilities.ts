@@ -50,3 +50,31 @@ export const GROUP_REASSIGN_LEADERSHIP_CAPABILITY = 'group:reassign_leadership';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
+
+/**
+ * Every capability string the system actually knows about — the three
+ * workflow-step capabilities for every registered entity type, plus every
+ * flat capability. Used to validate admin-supplied capability strings (e.g.
+ * `LoanProduct.approvalChainSteps[].requiredCapability` — see
+ * `modules/loan-products`, PHASE_7_NOTES.md) against a canonical set rather
+ * than accepting arbitrary strings, so a typo can't silently create an
+ * unfulfillable workflow step. Deliberately NOT the same thing as "whatever
+ * capabilities happen to be assigned to some role in the DB right now" (via
+ * RbacService) — a valid-but-currently-unassigned capability is fine; a
+ * string that isn't in this vocabulary at all is the actual error case.
+ */
+export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
+  ...ALL_WORKFLOW_ENTITY_TYPES.flatMap((entityType) => [
+    initiateCapability(entityType),
+    reviewCapability(entityType),
+    approveCapability(entityType),
+  ]),
+  STAFF_DISABLE_CAPABILITY,
+  RBAC_MANAGE_CAPABILITY,
+  ORG_MANAGE_CAPABILITY,
+  STAFF_CREATE_DIRECT_CAPABILITY,
+  BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
+  BRANCH_FUND_CAPABILITY,
+  BRANCH_VERIFY_FUNDING_CAPABILITY,
+  GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+];

@@ -1,7 +1,8 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EventEmitter2, EventEmitterModule } from '@nestjs/event-emitter';
-import { MongooseModule } from '@nestjs/mongoose';
+import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Model } from 'mongoose';
 
 import { WorkflowStatus, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
@@ -17,7 +18,11 @@ import {
   WorkflowChainConfig,
   WorkflowChainConfigSchema,
 } from './schemas/workflow-chain-config.schema';
-import { WorkflowRequest, WorkflowRequestSchema } from './schemas/workflow-request.schema';
+import {
+  WorkflowRequest,
+  WorkflowRequestDocument,
+  WorkflowRequestSchema,
+} from './schemas/workflow-request.schema';
 import { WorkflowEngineService } from './workflow-engine.service';
 
 describe('WorkflowEngineService', () => {
@@ -26,6 +31,7 @@ describe('WorkflowEngineService', () => {
   let service: WorkflowEngineService;
   let auditService: AuditService;
   let eventEmitter: EventEmitter2;
+  let workflowRequestModel: Model<WorkflowRequestDocument>;
 
   beforeAll(async () => {
     await mongo.start();
@@ -46,6 +52,7 @@ describe('WorkflowEngineService', () => {
     service = moduleRef.get(WorkflowEngineService);
     auditService = moduleRef.get(AuditService);
     eventEmitter = moduleRef.get(EventEmitter2);
+    workflowRequestModel = moduleRef.get(getModelToken(WorkflowRequest.name));
   }, 60_000);
 
   afterEach(async () => {
@@ -120,6 +127,81 @@ describe('WorkflowEngineService', () => {
 
       // still the original 2-step chain, not the second registration attempt
       expect(request.steps).toHaveLength(2);
+    });
+  });
+
+  describe('replaceChainConfig', () => {
+    it('overwrites an existing chain config, unlike registerChainConfig', async () => {
+      await registerTwoStepChain('REPLACE_ME', 'CREATE', true);
+
+      await service.replaceChainConfig({
+        entityType: 'REPLACE_ME',
+        action: 'CREATE',
+        restartOnReturn: false,
+        steps: [{ order: 0, requiredCapability: 'a-single-different-cap' }],
+      });
+
+      const request = await service.initiate({
+        entityType: 'REPLACE_ME',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'someone',
+      });
+
+      expect(request.steps).toHaveLength(1);
+      expect(request.steps[0]?.requiredCapability).toBe('a-single-different-cap');
+    });
+
+    it('creates the config if none exists yet (upserts, same as registerChainConfig)', async () => {
+      await service.replaceChainConfig({
+        entityType: 'NEW_VIA_REPLACE',
+        action: 'CREATE',
+        restartOnReturn: true,
+        steps: [{ order: 0, requiredCapability: 'cap' }],
+      });
+
+      const request = await service.initiate({
+        entityType: 'NEW_VIA_REPLACE',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'someone',
+      });
+      expect(request.steps).toHaveLength(1);
+    });
+
+    it('does not retroactively alter the steps snapshot already inside an in-flight WorkflowRequest', async () => {
+      await registerTwoStepChain('SNAPSHOT_TEST', 'CREATE', true);
+      const inFlight = await service.initiate({
+        entityType: 'SNAPSHOT_TEST',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'someone',
+      });
+
+      await service.replaceChainConfig({
+        entityType: 'SNAPSHOT_TEST',
+        action: 'CREATE',
+        restartOnReturn: true,
+        steps: [{ order: 0, requiredCapability: 'brand-new-cap' }],
+      });
+
+      // The document `initiate()` returned was persisted before the
+      // replaceChainConfig call — re-fetch it to prove the *stored* snapshot
+      // is what's actually unaffected, not just the in-memory object.
+      const reloaded = await workflowRequestModel.findById(inFlight._id).exec();
+      expect(reloaded?.steps).toHaveLength(2);
+      expect(reloaded?.steps.map((s) => s.requiredCapability)).toEqual([REVIEW_CAP, APPROVE_CAP]);
+    });
+
+    it('rejects an empty steps array, same as registerChainConfig', async () => {
+      await expect(
+        service.replaceChainConfig({
+          entityType: 'X',
+          action: 'REPLACE_EMPTY',
+          restartOnReturn: true,
+          steps: [],
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
