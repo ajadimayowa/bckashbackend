@@ -27,7 +27,7 @@ import {
 } from '../../platform/integrations/bvn/schemas/bvn-call-log.schema';
 import { S3_ADAPTER } from '../../platform/integrations/s3/interfaces/s3-adapter.interface';
 import { MockS3Service } from '../../platform/integrations/s3/mock-s3.service';
-import { approveCapability } from '../../platform/rbac/constants/capabilities';
+import { approveCapability, reviewCapability } from '../../platform/rbac/constants/capabilities';
 import {
   WorkflowChainConfig,
   WorkflowChainConfigSchema,
@@ -59,8 +59,13 @@ describe('CustomerService', () => {
   let pendingModel: Model<PendingBvnConsentDocument>;
   let branchId: string;
   const STAFF_ID = new Types.ObjectId().toString();
+  const REVIEWER_ID = new Types.ObjectId().toString();
   const APPROVER_ID = new Types.ObjectId().toString();
 
+  const REVIEW_CUSTOMER_ACTOR = {
+    staffId: REVIEWER_ID,
+    capabilities: [reviewCapability(WorkflowEntityType.CUSTOMER)],
+  };
   const APPROVE_CUSTOMER_ACTOR = {
     staffId: APPROVER_ID,
     capabilities: [approveCapability(WorkflowEntityType.CUSTOMER)],
@@ -226,10 +231,22 @@ describe('CustomerService', () => {
       const customer = await readyCustomer();
 
       const request = await service.submitForApproval(customer._id.toString(), STAFF_ID);
-      expect(request.status).toBe(WorkflowStatus.PENDING_APPROVAL);
+      // Two-step chain (review, then approve) — see PHASE_6_NOTES.md for the
+      // correction from Phase 5's original single-step reading.
+      expect(request.status).toBe(WorkflowStatus.PENDING_REVIEW);
 
       const stillPending = await customerModel.findById(customer._id).exec();
       expect(stillPending?.status).toBe(CustomerStatus.PENDING_APPROVAL);
+
+      const reviewed = await workflowEngineService.act({
+        workflowRequestId: request._id.toString(),
+        actor: REVIEW_CUSTOMER_ACTOR,
+        action: WorkflowStepAction.APPROVED,
+      });
+      expect(reviewed.status).toBe(WorkflowStatus.PENDING_APPROVAL);
+
+      const stillPendingAfterReview = await customerModel.findById(customer._id).exec();
+      expect(stillPendingAfterReview?.status).toBe(CustomerStatus.PENDING_APPROVAL);
 
       await workflowEngineService.act({
         workflowRequestId: request._id.toString(),
@@ -241,15 +258,35 @@ describe('CustomerService', () => {
       expect(activated?.status).toBe(CustomerStatus.ACTIVE);
     });
 
-    it('rejection leaves the customer in the terminal REJECTED status', async () => {
+    it('rejection at the review step leaves the customer in the terminal REJECTED status', async () => {
       const customer = await readyCustomer();
       const request = await service.submitForApproval(customer._id.toString(), STAFF_ID);
 
       await workflowEngineService.act({
         workflowRequestId: request._id.toString(),
-        actor: APPROVE_CUSTOMER_ACTOR,
+        actor: REVIEW_CUSTOMER_ACTOR,
         action: WorkflowStepAction.REJECTED,
         comment: 'duplicate customer',
+      });
+
+      const rejected = await customerModel.findById(customer._id).exec();
+      expect(rejected?.status).toBe(CustomerStatus.REJECTED);
+    });
+
+    it('rejection at the approval step (after a passing review) also lands on REJECTED', async () => {
+      const customer = await readyCustomer();
+      const request = await service.submitForApproval(customer._id.toString(), STAFF_ID);
+
+      await workflowEngineService.act({
+        workflowRequestId: request._id.toString(),
+        actor: REVIEW_CUSTOMER_ACTOR,
+        action: WorkflowStepAction.APPROVED,
+      });
+      await workflowEngineService.act({
+        workflowRequestId: request._id.toString(),
+        actor: APPROVE_CUSTOMER_ACTOR,
+        action: WorkflowStepAction.REJECTED,
+        comment: 'BVN details look mismatched',
       });
 
       const rejected = await customerModel.findById(customer._id).exec();

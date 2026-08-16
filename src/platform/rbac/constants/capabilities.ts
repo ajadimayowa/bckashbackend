@@ -37,6 +37,16 @@ export const BRANCH_FUND_CAPABILITY = 'branch:fund';
  * enforced in BranchFundingService, not by this capability alone.
  */
 export const BRANCH_VERIFY_FUNDING_CAPABILITY = 'branch:verify_funding';
+/**
+ * Gates *initiating* a GROUP/REASSIGN_LEADERSHIP request (filling a vacant
+ * leadership role) — deliberately narrower than `initiateCapability(GROUP)`
+ * (which MARKETER/MANAGER also hold), since this is a corrective admin action
+ * with no confirmed succession policy, not routine group formation. The
+ * request itself still goes through a single-step `workflow:approve:GROUP`
+ * check before taking effect, so an Admin who initiates it needs a second
+ * Admin/SuperAdmin/Approver to approve — see PHASE_6_NOTES.md.
+ */
+export const GROUP_REASSIGN_LEADERSHIP_CAPABILITY = 'group:reassign_leadership';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);

@@ -13,6 +13,7 @@ import { RbacModule } from './platform/rbac/rbac.module';
 import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { GroupsModule } from './modules/groups/groups.module';
 import { IdentityModule } from './modules/identity/identity.module';
 
 @Module({
@@ -57,6 +58,7 @@ import { IdentityModule } from './modules/identity/identity.module';
     IdentityModule,
     BranchesModule,
     CustomersModule,
+    GroupsModule,
   ],
   controllers: [HealthController],
 })

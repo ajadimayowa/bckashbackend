@@ -26,6 +26,10 @@ export enum WorkflowEntityType {
   STAFF = 'STAFF',
   CUSTOMER = 'CUSTOMER',
   GROUP = 'GROUP',
+  // Adding/removing a member from an already-approved Group — a distinct
+  // entity type/action from GROUP/CREATE, its own two-step chain. See
+  // PHASE_6_NOTES.md.
+  GROUP_MEMBERSHIP = 'GROUP_MEMBERSHIP',
   LOAN = 'LOAN',
   LOAN_PRODUCT = 'LOAN_PRODUCT',
   FEE_DEFINITION = 'FEE_DEFINITION',

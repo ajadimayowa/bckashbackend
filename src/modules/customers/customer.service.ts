@@ -25,7 +25,7 @@ import {
   S3Adapter,
 } from '../../platform/integrations/s3/interfaces/s3-adapter.interface';
 import { buildKycObjectKey } from '../../platform/integrations/s3/s3-key.util';
-import { approveCapability } from '../../platform/rbac/constants/capabilities';
+import { approveCapability, reviewCapability } from '../../platform/rbac/constants/capabilities';
 import {
   WORKFLOW_APPROVED_EVENT,
   WORKFLOW_REJECTED_EVENT,
@@ -72,14 +72,21 @@ export class CustomerService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Single step, held by whoever holds workflow:approve:CUSTOMER — matches
-    // "reviewed and approved" from the brief; flagged as a default (not a
-    // two-step chain) in PHASE_5_NOTES.md.
+    // Two steps (review, then approve) — corrected from Phase 5's original
+    // single-step reading of "reviewed and approved" once Phase 6 applied the
+    // same brief language consistently to Group creation. See PHASE_6_NOTES.md
+    // for the correction; the chain-config upsert is idempotent
+    // ($setOnInsert), so this change only takes effect for environments that
+    // haven't already inserted the old single-step config — see that same
+    // note for the migration caveat.
     await this.workflowEngineService.registerChainConfig({
       entityType: WorkflowEntityType.CUSTOMER,
       action: KYC_CHAIN_ACTION,
       restartOnReturn: true,
-      steps: [{ order: 0, requiredCapability: approveCapability(WorkflowEntityType.CUSTOMER) }],
+      steps: [
+        { order: 0, requiredCapability: reviewCapability(WorkflowEntityType.CUSTOMER) },
+        { order: 1, requiredCapability: approveCapability(WorkflowEntityType.CUSTOMER) },
+      ],
     });
   }
 
