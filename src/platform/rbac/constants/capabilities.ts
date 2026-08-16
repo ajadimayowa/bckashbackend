@@ -23,6 +23,10 @@ export function approveCapability(entityType: string): string {
 /** Flat capabilities not tied to a workflow entity type. */
 export const STAFF_DISABLE_CAPABILITY = 'staff:disable';
 export const RBAC_MANAGE_CAPABILITY = 'rbac:manage';
+/** Department/Unit/Branch CRUD — deliberately not workflow-mediated, see PHASE_3_NOTES.md. */
+export const ORG_MANAGE_CAPABILITY = 'org:manage';
+/** SuperAdmin directly creating a MANAGER/ADMIN/APPROVER account, bypassing the workflow engine. */
+export const STAFF_CREATE_DIRECT_CAPABILITY = 'staff:create-direct';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);

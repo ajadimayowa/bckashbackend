@@ -87,6 +87,11 @@ export class WorkflowRequest {
 
   @Prop({ type: String, default: null })
   branchId!: string | null;
+
+  // Populated by Mongoose (schema option `timestamps: true` below), not by an
+  // explicit @Prop — declared here only so TypeScript knows they exist.
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const WorkflowRequestSchema = SchemaFactory.createForClass(WorkflowRequest);

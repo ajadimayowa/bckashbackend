@@ -20,3 +20,20 @@ export enum ModuleName {
   ACCOUNTING = 'ACCOUNTING',
   HR = 'HR',
 }
+
+/**
+ * PENDING_APPROVAL: onboarding WorkflowRequest is in flight — no live Staff
+ * record exists yet at this point (the engine only creates one on approval), so
+ * in practice a Staff document only ever starts life as ACTIVE (workflow-approved)
+ * or is created directly as ACTIVE (SuperAdmin direct creation). REJECTED is kept
+ * for symmetry/documentation of the state space, but since a rejected onboarding
+ * never creates a Staff document either, no Staff document ever actually holds
+ * PENDING_APPROVAL or REJECTED today — flagging in case a future phase wants a
+ * placeholder record instead of "nothing" while a request is in flight.
+ */
+export enum StaffStatus {
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  ACTIVE = 'ACTIVE',
+  DISABLED = 'DISABLED',
+  REJECTED = 'REJECTED',
+}

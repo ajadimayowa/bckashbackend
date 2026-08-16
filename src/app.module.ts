@@ -10,6 +10,8 @@ import { HealthController } from './common/health/health.controller';
 import { AuditModule } from './platform/audit/audit.module';
 import { RbacModule } from './platform/rbac/rbac.module';
 import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine.module';
+import { BranchesModule } from './modules/branches/branches.module';
+import { IdentityModule } from './modules/identity/identity.module';
 
 @Module({
   imports: [
@@ -48,6 +50,9 @@ import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine
     AuditModule,
     RbacModule,
     WorkflowEngineModule,
+
+    IdentityModule,
+    BranchesModule,
   ],
   controllers: [HealthController],
 })

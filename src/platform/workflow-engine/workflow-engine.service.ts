@@ -266,6 +266,12 @@ export class WorkflowEngineService {
       branchId: updated.branchId,
     };
 
+    // emitAsync + await, not emit — callers of `act()` (a controller handling
+    // an approval request, say) must be able to trust that a domain module's
+    // `workflow.approved` reaction (e.g. "create the Staff record") has
+    // actually finished before `act()` resolves, not fire-and-forget in the
+    // background. Bug found and fixed while wiring Phase 3's first real
+    // consumer — see PHASE_3_NOTES.md.
     if (newStatus === WorkflowStatus.APPROVED) {
       const latestPayload = updated.payloadHistory[updated.payloadHistory.length - 1];
       const approvedEvent: WorkflowApprovedEvent = {
@@ -273,14 +279,14 @@ export class WorkflowEngineService {
         payload: latestPayload?.payload ?? {},
         initiatedBy: updated.initiatedBy,
       };
-      this.eventEmitter.emit(WORKFLOW_APPROVED_EVENT, approvedEvent);
+      await this.eventEmitter.emitAsync(WORKFLOW_APPROVED_EVENT, approvedEvent);
     } else if (action === WorkflowStepAction.REJECTED) {
       const rejectedEvent: WorkflowRejectedEvent = {
         ...eventBase,
         rejectedBy: actor.staffId,
         comment,
       };
-      this.eventEmitter.emit(WORKFLOW_REJECTED_EVENT, rejectedEvent);
+      await this.eventEmitter.emitAsync(WORKFLOW_REJECTED_EVENT, rejectedEvent);
     } else if (action === WorkflowStepAction.RETURNED) {
       const returnedEvent: WorkflowReturnedEvent = {
         ...eventBase,
@@ -288,7 +294,7 @@ export class WorkflowEngineService {
         // validated non-empty above
         comment: comment as string,
       };
-      this.eventEmitter.emit(WORKFLOW_RETURNED_EVENT, returnedEvent);
+      await this.eventEmitter.emitAsync(WORKFLOW_RETURNED_EVENT, returnedEvent);
     }
 
     return updated;
@@ -399,7 +405,7 @@ export class WorkflowEngineService {
       branchId: updated.branchId,
       resubmittedBy: actorId,
     };
-    this.eventEmitter.emit(WORKFLOW_RESUBMITTED_EVENT, resubmittedEvent);
+    await this.eventEmitter.emitAsync(WORKFLOW_RESUBMITTED_EVENT, resubmittedEvent);
 
     return updated;
   }

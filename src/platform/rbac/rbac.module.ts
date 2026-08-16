@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { CapabilityGuard } from './guards/capability.guard';
@@ -9,6 +9,10 @@ import { RbacService } from './rbac.service';
 import { RoleCapabilities, RoleCapabilitiesSchema } from './schemas/role-capabilities.schema';
 import { StaffModuleAccess, StaffModuleAccessSchema } from './schemas/staff-module-access.schema';
 
+// Global as of Phase 3 — every domain module needs these guards on its
+// controllers, so importing RbacModule everywhere by hand would be pure
+// boilerplate. (Not global in Phase 2, since nothing consumed it yet.)
+@Global()
 @Module({
   imports: [
     MongooseModule.forFeature([
