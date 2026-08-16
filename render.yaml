@@ -10,7 +10,7 @@
 # `node dist/worker`) rather than duplicating build config.
 services:
   - type: web
-    name: coop-loan-backend-api
+    name: bckashprocessautomation-api
     runtime: node
     plan: starter
     buildCommand: npm ci && npm run build
@@ -68,7 +68,7 @@ services:
       - key: BREVO_SENDER_EMAIL
         sync: false
       - key: BREVO_SENDER_NAME
-        value: Cooperative Loans
+        value: BCKash Process Automation
       - key: TERMII_API_KEY
         sync: false
       - key: TERMII_SENDER_ID

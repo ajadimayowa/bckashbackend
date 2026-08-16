@@ -1,8 +1,9 @@
-# Cooperative Loan Backend
+# BCKash Process Automation
 
-Backend API for a cooperative society's group business loan management platform.
-Modular monolith (NestJS + MongoDB/Mongoose + BullMQ/Redis), TypeScript strict mode.
-No frontend here — this serves a mobile app and web frontend to be built separately.
+Backend API for BCKash Process Automation — a cooperative society's group business loan
+management platform. Modular monolith (NestJS + MongoDB/Mongoose + BullMQ/Redis),
+TypeScript strict mode. No frontend here — this serves a mobile app and web frontend
+to be built separately.
 
 ## Tech stack
 

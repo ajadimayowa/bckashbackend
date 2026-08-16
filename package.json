@@ -1,7 +1,7 @@
 {
-  "name": "coop-loan-backend",
+  "name": "bckashprocessautomation",
   "version": "0.0.1",
-  "description": "Group business loan management platform backend for a cooperative society (modular monolith, NestJS + MongoDB)",
+  "description": "BCKash Process Automation — group business loan management platform backend for a cooperative society (modular monolith, NestJS + MongoDB)",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
