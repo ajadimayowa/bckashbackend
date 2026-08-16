@@ -6,6 +6,7 @@ import { PassportModule } from '@nestjs/passport';
 import type ms from 'ms';
 
 import type { JwtConfig } from '../../common/config/configuration';
+import { BvnIntegrationModule } from '../../platform/integrations/bvn/bvn.module';
 import { WorkflowEngineModule } from '../../platform/workflow-engine/workflow-engine.module';
 // Cross-module schema registration only — see staff.service.ts's comment and
 // PHASE_3_NOTES.md. No import of BranchesModule/BranchesService here.
@@ -36,6 +37,7 @@ import { UnitsService } from './units.service';
       { name: Branch.name, schema: BranchSchema },
     ]),
     WorkflowEngineModule,
+    BvnIntegrationModule,
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],

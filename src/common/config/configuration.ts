@@ -31,11 +31,11 @@ export interface EncryptionConfig {
   piiKey: string;
 }
 
-export interface NibssConfig {
+export interface BvnConfig {
   baseUrl: string;
-  clientId?: string;
-  clientSecret?: string;
-  apiKey?: string;
+  authEmail?: string;
+  authPassword?: string;
+  useMock: boolean;
 }
 
 export interface AwsConfig {
@@ -45,6 +45,7 @@ export interface AwsConfig {
   s3: {
     bucket: string;
     signedUrlExpiresInSeconds: number;
+    useMock: boolean;
   };
   rekognition: {
     faceMatchThreshold: number;
@@ -69,7 +70,7 @@ export interface RootConfig {
   redis: RedisConfig;
   jwt: JwtConfig;
   encryption: EncryptionConfig;
-  nibss: NibssConfig;
+  bvn: BvnConfig;
   aws: AwsConfig;
   brevo: BrevoConfig;
   termii: TermiiConfig;
@@ -99,11 +100,14 @@ export default (): RootConfig => ({
   encryption: {
     piiKey: process.env.PII_ENCRYPTION_KEY ?? '',
   },
-  nibss: {
-    baseUrl: process.env.NIBSS_BASE_URL ?? '',
-    clientId: process.env.NIBSS_CLIENT_ID || undefined,
-    clientSecret: process.env.NIBSS_CLIENT_SECRET || undefined,
-    apiKey: process.env.NIBSS_API_KEY || undefined,
+  bvn: {
+    baseUrl: process.env.BVN_QUERY_BASEURL ?? '',
+    authEmail: process.env.BVN_QUERY_AUTH_EMAIL || undefined,
+    authPassword: process.env.BVN_QUERY_AUTH_PASSWORD || undefined,
+    useMock:
+      process.env.BVN_QUERY_USE_MOCK === 'true' ||
+      !process.env.BVN_QUERY_AUTH_EMAIL ||
+      !process.env.BVN_QUERY_AUTH_PASSWORD,
   },
   aws: {
     region: process.env.AWS_REGION ?? '',
@@ -112,6 +116,10 @@ export default (): RootConfig => ({
     s3: {
       bucket: process.env.AWS_S3_BUCKET ?? '',
       signedUrlExpiresInSeconds: parseInt(process.env.AWS_S3_SIGNED_URL_EXPIRES_IN ?? '900', 10),
+      useMock:
+        process.env.AWS_S3_USE_MOCK === 'true' ||
+        !process.env.AWS_ACCESS_KEY_ID ||
+        !process.env.AWS_SECRET_ACCESS_KEY,
     },
     rekognition: {
       faceMatchThreshold: parseInt(process.env.AWS_REKOGNITION_FACE_MATCH_THRESHOLD ?? '90', 10),

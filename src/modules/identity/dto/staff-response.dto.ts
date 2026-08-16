@@ -23,6 +23,9 @@ export class StaffResponseDto {
   disabledReason!: string | null;
   disabledBy!: string | null;
   disabledAt!: Date | null;
+  /** Non-sensitive — the encrypted BVN itself (`bvnEncrypted`) is deliberately never exposed here. */
+  bvnVerified!: boolean;
+  bvnVerifiedAt!: Date | null;
   createdAt!: Date;
 
   static fromDocument(doc: StaffDocument): StaffResponseDto {
@@ -41,6 +44,8 @@ export class StaffResponseDto {
     dto.disabledReason = doc.disabledReason;
     dto.disabledBy = doc.disabledBy ? doc.disabledBy.toString() : null;
     dto.disabledAt = doc.disabledAt;
+    dto.bvnVerified = doc.bvnVerified;
+    dto.bvnVerifiedAt = doc.bvnVerifiedAt;
     dto.createdAt = doc.createdAt;
     return dto;
   }

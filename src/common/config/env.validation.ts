@@ -24,16 +24,24 @@ export const envValidationSchema = Joi.object({
 
   PII_ENCRYPTION_KEY: Joi.string().min(32).required(),
 
-  NIBSS_BASE_URL: Joi.string().uri().required(),
-  NIBSS_CLIENT_ID: Joi.string().allow('').optional(),
-  NIBSS_CLIENT_SECRET: Joi.string().allow('').optional(),
-  NIBSS_API_KEY: Joi.string().allow('').optional(),
+  // BVN verification (platform/integrations/bvn) — replaces the generic "NIBSS"
+  // placeholder from Phase 1 now that the real provider contract is confirmed;
+  // see PHASE_5_NOTES.md.
+  BVN_QUERY_BASEURL: Joi.string().uri().required(),
+  BVN_QUERY_AUTH_EMAIL: Joi.string().email().allow('').optional(),
+  BVN_QUERY_AUTH_PASSWORD: Joi.string().allow('').optional(),
+  // When true (or when auth credentials are absent), the mock adapter is used
+  // instead of live calls — see bvn.module.ts.
+  BVN_QUERY_USE_MOCK: Joi.boolean().default(false),
 
   AWS_REGION: Joi.string().required(),
   AWS_ACCESS_KEY_ID: Joi.string().allow('').optional(),
   AWS_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
   AWS_S3_BUCKET: Joi.string().required(),
   AWS_S3_SIGNED_URL_EXPIRES_IN: Joi.number().positive().default(900),
+  // Mirrors BVN_QUERY_USE_MOCK — forces the in-memory S3 adapter even if
+  // credentials above happen to be set.
+  AWS_S3_USE_MOCK: Joi.boolean().default(false),
   AWS_REKOGNITION_FACE_MATCH_THRESHOLD: Joi.number().min(0).max(100).default(90),
 
   BREVO_API_KEY: Joi.string().allow('').optional(),

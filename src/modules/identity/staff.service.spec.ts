@@ -1,12 +1,23 @@
+import { randomBytes } from 'node:crypto';
+
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Model, Types } from 'mongoose';
 
+import { __resetPiiEncryptionKeyCache } from '../../common/crypto/pii-encryption';
 import { ModuleName, StaffRole, StaffStatus } from '../../common/enums/identity.enums';
 import { WorkflowStatus, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { AuditModule } from '../../platform/audit/audit.module';
+import { EncryptionService } from '../../platform/encryption/encryption.service';
+import { BvnCallLogService } from '../../platform/integrations/bvn/bvn-call-log.service';
+import { BVN_VERIFICATION_ADAPTER } from '../../platform/integrations/bvn/interfaces/bvn-verification-adapter.interface';
+import { MockBvnVerificationAdapter } from '../../platform/integrations/bvn/mock-bvn-verification.adapter';
+import {
+  BvnCallLog,
+  BvnCallLogSchema,
+} from '../../platform/integrations/bvn/schemas/bvn-call-log.schema';
 import { approveCapability } from '../../platform/rbac/constants/capabilities';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
 import { Branch, BranchDocument, BranchSchema } from '../branches/schemas/branch.schema';
@@ -50,6 +61,9 @@ describe('StaffService', () => {
   const ADMIN_ACTOR_ID = new Types.ObjectId().toString();
 
   beforeAll(async () => {
+    process.env.PII_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    __resetPiiEncryptionKeyCache();
+
     await mongo.start();
 
     moduleRef = await Test.createTestingModule({
@@ -63,6 +77,7 @@ describe('StaffService', () => {
           { name: Branch.name, schema: BranchSchema },
           { name: WorkflowChainConfig.name, schema: WorkflowChainConfigSchema },
           { name: WorkflowRequest.name, schema: WorkflowRequestSchema },
+          { name: BvnCallLog.name, schema: BvnCallLogSchema },
         ]),
         AuditModule,
         EventEmitterModule.forRoot(),
@@ -73,6 +88,10 @@ describe('StaffService', () => {
         StaffService,
         RefreshTokenService,
         WorkflowEngineService,
+        EncryptionService,
+        BvnCallLogService,
+        MockBvnVerificationAdapter,
+        { provide: BVN_VERIFICATION_ADAPTER, useExisting: MockBvnVerificationAdapter },
       ],
     }).compile();
 
@@ -283,6 +302,60 @@ describe('StaffService', () => {
       await expect(
         staffService.disable(created._id.toString(), ADMIN_ACTOR_ID, 'again'),
       ).rejects.toThrow();
+    });
+  });
+
+  describe('BVN verification (Phase 5)', () => {
+    async function createActiveStaff(): Promise<StaffDocument> {
+      const dto = new CreateStaffDirectDto();
+      dto.firstName = 'Tunde';
+      dto.lastName = 'Bakare';
+      dto.email = `tunde.${Date.now()}.${Math.random()}@example.com`;
+      dto.phoneNumber = `080${Math.floor(Math.random() * 1e8)}`;
+      dto.password = 'Str0ng!Passw0rd';
+      dto.role = StaffRole.MANAGER;
+      dto.departmentId = departmentId;
+      dto.unitId = unitId;
+      dto.branchId = branchId;
+      dto.moduleAccess = [];
+      return staffService.createDirect(dto, 'superadmin-1');
+    }
+
+    it('verifyBvn (via directVerify — staff skip the OTP consent flow) sets bvnVerified/bvnVerifiedAt', async () => {
+      const staff = await createActiveStaff();
+      expect(staff.bvnVerified).toBe(false);
+
+      const verified = await staffService.verifyBvn(
+        staff._id.toString(),
+        '12345678901',
+        ADMIN_ACTOR_ID,
+      );
+
+      expect(verified.bvnVerified).toBe(true);
+      expect(verified.bvnVerifiedAt).not.toBeNull();
+      expect(verified.bvnVerifiedBy?.toString()).toBe(ADMIN_ACTOR_ID);
+      // never plaintext at rest
+      expect(verified.bvnEncrypted).not.toBe('12345678901');
+    });
+
+    it('findStaffWithUnverifiedBvn returns exactly the staff who have not been BVN-verified', async () => {
+      const unverified = await createActiveStaff();
+      const toBeVerified = await createActiveStaff();
+      await staffService.verifyBvn(toBeVerified._id.toString(), '10987654321', ADMIN_ACTOR_ID);
+
+      const results = await staffService.findStaffWithUnverifiedBvn();
+      const ids = results.map((s) => s._id.toString());
+
+      expect(ids).toContain(unverified._id.toString());
+      expect(ids).not.toContain(toBeVerified._id.toString());
+    });
+
+    it('does not block any functional action for an unverified staff member (enforcement level: visibility only — see PHASE_5_NOTES.md)', async () => {
+      const staff = await createActiveStaff();
+      expect(staff.bvnVerified).toBe(false);
+      // status is still ACTIVE — nothing about onboarding/enable/disable is
+      // gated on bvnVerified anywhere in this module.
+      expect(staff.status).toBe(StaffStatus.ACTIVE);
     });
   });
 });

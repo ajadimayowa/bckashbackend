@@ -17,6 +17,7 @@ import { CreateStaffDirectDto } from './dto/create-staff-direct.dto';
 import { DisableStaffDto } from './dto/disable-staff.dto';
 import { InitiateStaffOnboardingDto } from './dto/initiate-staff-onboarding.dto';
 import { StaffResponseDto } from './dto/staff-response.dto';
+import { VerifyStaffBvnDto } from './dto/verify-staff-bvn.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { StaffService } from './staff.service';
 
@@ -52,10 +53,29 @@ export class StaffController {
     return staff.map((s) => StaffResponseDto.fromDocument(s));
   }
 
+  // Must precede `@Get(':id')` — otherwise "bvn" would be matched as an :id.
+  @Get('bvn/unverified')
+  @RequireCapability(ORG_MANAGE_CAPABILITY)
+  async findWithUnverifiedBvn(): Promise<StaffResponseDto[]> {
+    const staff = await this.staffService.findStaffWithUnverifiedBvn();
+    return staff.map((s) => StaffResponseDto.fromDocument(s));
+  }
+
   @Get(':id')
   @RequireCapability(ORG_MANAGE_CAPABILITY)
   async findOne(@Param('id') id: string): Promise<StaffResponseDto> {
     const staff = await this.staffService.findById(id);
+    return StaffResponseDto.fromDocument(staff);
+  }
+
+  @Post(':id/verify-bvn')
+  @RequireCapability(STAFF_DISABLE_CAPABILITY)
+  async verifyBvn(
+    @Param('id') id: string,
+    @Body() dto: VerifyStaffBvnDto,
+    @CurrentStaffContext() actor: ResolvedStaffContext,
+  ): Promise<StaffResponseDto> {
+    const staff = await this.staffService.verifyBvn(id, dto.bvn, actor.staffId);
     return StaffResponseDto.fromDocument(staff);
   }
 

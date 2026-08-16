@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -13,6 +14,12 @@ import { Model, Types } from 'mongoose';
 import { ModuleName, StaffRole, StaffStatus } from '../../common/enums/identity.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { AuditService } from '../../platform/audit/audit.service';
+import { EncryptionService } from '../../platform/encryption/encryption.service';
+import {
+  BVN_VERIFICATION_ADAPTER,
+  BvnDetails,
+  BvnVerificationAdapter,
+} from '../../platform/integrations/bvn/interfaces/bvn-verification-adapter.interface';
 import { approveCapability } from '../../platform/rbac/constants/capabilities';
 import {
   WORKFLOW_APPROVED_EVENT,
@@ -54,6 +61,8 @@ export class StaffService implements OnModuleInit {
     private readonly workflowEngineService: WorkflowEngineService,
     private readonly auditService: AuditService,
     private readonly refreshTokenService: RefreshTokenService,
+    @Inject(BVN_VERIFICATION_ADAPTER) private readonly bvnAdapter: BvnVerificationAdapter,
+    private readonly encryptionService: EncryptionService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -297,5 +306,47 @@ export class StaffService implements OnModuleInit {
     });
 
     return staff;
+  }
+
+  // ---------------------------------------------------------------------------
+  // BVN (Phase 5) — compulsory, but not a blocker; see PHASE_5_NOTES.md for
+  // the enforcement level chosen (visibility only, no functional block).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Staff skip the OTP consent flow entirely — that flow is customer
+   * self-attestation via their own registered phone. Staff BVN is an
+   * internal compliance check an Admin/HR performs on the staff member's
+   * behalf, so this goes straight to the no-consent `directVerify` endpoint.
+   */
+  async verifyBvn(staffId: string, bvn: string, verifiedBy: string): Promise<StaffDocument> {
+    const staff = await this.findById(staffId);
+
+    const details: BvnDetails = await this.bvnAdapter.directVerify(bvn, {
+      calledBy: verifiedBy,
+      entityType: 'STAFF',
+      entityId: staffId,
+    });
+
+    staff.bvnEncrypted = this.encryptionService.encrypt(details.bvn);
+    staff.bvnVerified = true;
+    staff.bvnVerifiedAt = new Date();
+    staff.bvnVerifiedBy = new Types.ObjectId(verifiedBy);
+    await staff.save();
+
+    await this.auditService.record({
+      actorId: verifiedBy,
+      action: 'STAFF_BVN_VERIFIED',
+      entityType: 'STAFF',
+      entityId: staffId,
+      after: { bvnVerified: true },
+    });
+
+    return staff;
+  }
+
+  /** For an Admin compliance dashboard — see PHASE_5_NOTES.md, option (c). */
+  async findStaffWithUnverifiedBvn(): Promise<StaffDocument[]> {
+    return this.staffModel.find({ bvnVerified: false }).sort({ createdAt: -1 }).exec();
   }
 }

@@ -58,6 +58,27 @@ export class Staff {
   @Prop({ type: Date, default: null })
   disabledAt!: Date | null;
 
+  /**
+   * Phase 5 extension. Compulsory but *not* a blocker at onboarding — a
+   * staff member reaches ACTIVE (Phase 3) without this. No separate
+   * KycRecord-equivalent collection: staff BVN is a single live
+   * `directVerify` compliance check (no OTP flow, no NIN, no biometric), so
+   * a few fields directly on Staff are enough — a whole parallel collection
+   * would be pure overhead. See PHASE_5_NOTES.md for the enforcement level
+   * chosen (currently: visibility only, no functional block).
+   */
+  @Prop({ type: String, default: null })
+  bvnEncrypted!: string | null;
+
+  @Prop({ type: Boolean, required: true, default: false })
+  bvnVerified!: boolean;
+
+  @Prop({ type: Date, default: null })
+  bvnVerifiedAt!: Date | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'Staff', default: null })
+  bvnVerifiedBy!: Types.ObjectId | null;
+
   // Populated by Mongoose (schema option `timestamps: true` below), not by an
   // explicit @Prop — declared here only so TypeScript knows they exist.
   createdAt!: Date;

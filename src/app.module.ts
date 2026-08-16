@@ -8,9 +8,11 @@ import { AppConfigModule } from './common/config/app-config.module';
 import type { MongoConfig, RedisConfig } from './common/config/configuration';
 import { HealthController } from './common/health/health.controller';
 import { AuditModule } from './platform/audit/audit.module';
+import { EncryptionModule } from './platform/encryption/encryption.module';
 import { RbacModule } from './platform/rbac/rbac.module';
 import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine.module';
 import { BranchesModule } from './modules/branches/branches.module';
+import { CustomersModule } from './modules/customers/customers.module';
 import { IdentityModule } from './modules/identity/identity.module';
 
 @Module({
@@ -48,11 +50,13 @@ import { IdentityModule } from './modules/identity/identity.module';
     EventEmitterModule.forRoot(),
 
     AuditModule,
+    EncryptionModule,
     RbacModule,
     WorkflowEngineModule,
 
     IdentityModule,
     BranchesModule,
+    CustomersModule,
   ],
   controllers: [HealthController],
 })
