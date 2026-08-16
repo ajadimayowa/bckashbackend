@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
@@ -35,6 +36,30 @@ async function bootstrap(): Promise<void> {
       transformOptions: { enableImplicitConversion: true },
     }),
   );
+
+  if (appConfig?.swaggerEnabled) {
+    // Mounted at /docs, outside the /api prefix set above — a documentation
+    // UI isn't itself an API route. Never exposes request/response bodies or
+    // real data, only the shape of the API (routes, DTOs, auth scheme) —
+    // still gated off by default in production (see SWAGGER_ENABLED / AppConfig).
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('BCKash Process Automation API')
+      .setDescription(
+        'Group business loan management platform for a cooperative society. ' +
+          'Authenticate via POST /api/auth/login, then use the returned accessToken as a Bearer token below.',
+      )
+      .setVersion('0.0.1')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'access-token', // referenced by @ApiBearerAuth('access-token') on protected controllers
+      )
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document, {
+      swaggerOptions: { persistAuthorization: true },
+    });
+    logger.log('Swagger UI enabled at /docs');
+  }
 
   app.enableShutdownHooks();
 

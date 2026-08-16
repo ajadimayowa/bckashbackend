@@ -11,6 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { WorkflowRequestSummaryDto } from '../../platform/workflow-engine/dto/workflow-request-summary.dto';
@@ -32,6 +33,8 @@ import { UpdateOnboardingDetailsDto } from './dto/update-onboarding-details.dto'
 const INITIATE_CUSTOMER = initiateCapability(WorkflowEntityType.CUSTOMER);
 const APPROVE_CUSTOMER = approveCapability(WorkflowEntityType.CUSTOMER);
 
+@ApiTags('customers')
+@ApiBearerAuth('access-token')
 @Controller('customers')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 export class CustomerController {
@@ -74,6 +77,16 @@ export class CustomerController {
   @Post(':id/biometric')
   @RequireCapability(INITIATE_CUSTOMER)
   @UseInterceptors(FileInterceptor('image'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        image: { type: 'string', format: 'binary' },
+      },
+      required: ['image'],
+    },
+  })
   async captureBiometric(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import {
   BRANCH_FUND_CAPABILITY,
@@ -15,6 +16,8 @@ import { RecordBranchFundingDto } from './dto/record-branch-funding.dto';
 import { RejectBranchFundingDto } from './dto/reject-branch-funding.dto';
 import { BranchFunding } from './schemas/branch-funding.schema';
 
+@ApiTags('branch-funding')
+@ApiBearerAuth('access-token')
 @Controller('branch-funding')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 export class BranchFundingController {

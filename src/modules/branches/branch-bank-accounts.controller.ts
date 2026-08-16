@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { BRANCH_MANAGE_ACCOUNTS_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -10,6 +11,8 @@ import { CreateBranchBankAccountDto } from './dto/create-branch-bank-account.dto
 import { UpdateBranchBankAccountDto } from './dto/update-branch-bank-account.dto';
 import { BranchBankAccount } from './schemas/branch-bank-account.schema';
 
+@ApiTags('bank-accounts')
+@ApiBearerAuth('access-token')
 @Controller('bank-accounts')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 @RequireCapability(BRANCH_MANAGE_ACCOUNTS_CAPABILITY)

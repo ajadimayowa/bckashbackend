@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, ParseEnumPipe, Put, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { StaffRole } from '../../common/enums/identity.enums';
 import { RBAC_MANAGE_CAPABILITY } from './constants/capabilities';
@@ -19,7 +20,17 @@ import { StaffModuleAccess } from './schemas/staff-module-access.schema';
  * `@UseGuards(StaffContextGuard, CapabilityGuard)` expects `request.user` to
  * already be populated by an upstream JWT auth guard — that guard is Phase 3's
  * (identity module) responsibility, not registered here.
+ *
+ * KNOWN GAP (found while wiring up Swagger, not fixed here — see the
+ * conversation): no JwtAuthGuard is actually applied on this controller, so
+ * `request.user` is never populated and StaffContextGuard 401s on every
+ * call today. Fails closed (not a security hole), but these endpoints are
+ * currently unusable. The clean fix is a globally-registered JwtAuthGuard
+ * (APP_GUARD) rather than importing identity's guard into the platform
+ * layer here, which is a real architecture decision, not a docs change.
  */
+@ApiTags('rbac')
+@ApiBearerAuth('access-token')
 @Controller('rbac')
 @UseGuards(StaffContextGuard, CapabilityGuard)
 export class RbacController {

@@ -24,6 +24,11 @@ export const envValidationSchema = Joi.object({
 
   PII_ENCRYPTION_KEY: Joi.string().min(32).required(),
 
+  // Swagger/OpenAPI docs at /docs. Defaults to on in development, off in
+  // production (a financial API's endpoint shapes/DTOs are worth not handing
+  // out publicly by default) — explicitly override either way if needed.
+  SWAGGER_ENABLED: Joi.boolean().optional(),
+
   // BVN verification (platform/integrations/bvn) — replaces the generic "NIBSS"
   // placeholder from Phase 1 now that the real provider contract is confirmed;
   // see PHASE_5_NOTES.md.

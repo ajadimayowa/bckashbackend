@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { ORG_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -10,6 +11,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Unit } from './schemas/unit.schema';
 import { UnitsService } from './units.service';
 
+@ApiTags('units')
+@ApiBearerAuth('access-token')
 @Controller('units')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 @RequireCapability(ORG_MANAGE_CAPABILITY)

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { WorkflowRequestSummaryDto } from '../../platform/workflow-engine/dto/workflow-request-summary.dto';
@@ -21,6 +22,8 @@ import { VerifyStaffBvnDto } from './dto/verify-staff-bvn.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { StaffService } from './staff.service';
 
+@ApiTags('staff')
+@ApiBearerAuth('access-token')
 @Controller('staff')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 export class StaffController {

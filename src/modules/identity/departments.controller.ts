@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { ORG_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -15,6 +16,8 @@ import { Department } from './schemas/department.schema';
  * PHASE_3_NOTES.md for why (low-risk, easily reversible, no maker-checker
  * value for renaming a department).
  */
+@ApiTags('departments')
+@ApiBearerAuth('access-token')
 @Controller('departments')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 @RequireCapability(ORG_MANAGE_CAPABILITY)

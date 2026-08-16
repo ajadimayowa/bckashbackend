@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../identity/guards/jwt-auth.guard';
 import { ORG_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
@@ -16,6 +17,8 @@ import { UpdateBranchDto } from './dto/update-branch.dto';
 import { Branch } from './schemas/branch.schema';
 import { BranchManagerAssignment } from './schemas/branch-manager-assignment.schema';
 
+@ApiTags('branches')
+@ApiBearerAuth('access-token')
 @Controller('branches')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
 @RequireCapability(ORG_MANAGE_CAPABILITY)
