@@ -1,11 +1,15 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AppConfigModule } from './common/config/app-config.module';
 import type { MongoConfig, RedisConfig } from './common/config/configuration';
 import { HealthController } from './common/health/health.controller';
+import { AuditModule } from './platform/audit/audit.module';
+import { RbacModule } from './platform/rbac/rbac.module';
+import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine.module';
 
 @Module({
   imports: [
@@ -21,7 +25,7 @@ import { HealthController } from './common/health/health.controller';
 
     // Root BullMQ connection. Individual queues (penalty-sweep, notification-dispatch,
     // funding-reminders, ...) are registered by the modules that own them, starting
-    // in Phase 2 (platform/jobs) and Phase 11 (notifications).
+    // in Phase 9 (repayments) and Phase 11 (notifications).
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
@@ -36,6 +40,14 @@ import { HealthController } from './common/health/health.controller';
         };
       },
     }),
+
+    // Global — WorkflowEngineService (and, later, domain modules) inject
+    // EventEmitter2 directly without re-importing this module.
+    EventEmitterModule.forRoot(),
+
+    AuditModule,
+    RbacModule,
+    WorkflowEngineModule,
   ],
   controllers: [HealthController],
 })

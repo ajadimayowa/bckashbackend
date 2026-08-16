@@ -1,0 +1,11 @@
+export enum BranchBankAccountPurpose {
+  COLLECTION = 'COLLECTION',
+  DISBURSEMENT = 'DISBURSEMENT',
+  GENERAL = 'GENERAL',
+}
+
+export enum BranchFundingStatus {
+  PENDING_VERIFICATION = 'PENDING_VERIFICATION',
+  VERIFIED = 'VERIFIED',
+  REJECTED = 'REJECTED',
+}
