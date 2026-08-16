@@ -2,6 +2,9 @@ import { StaffRole } from '../../../common/enums/identity.enums';
 import { WorkflowEntityType } from '../../../common/enums/workflow.enums';
 import {
   ALL_WORKFLOW_ENTITY_TYPES,
+  BRANCH_FUND_CAPABILITY,
+  BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
+  BRANCH_VERIFY_FUNDING_CAPABILITY,
   ORG_MANAGE_CAPABILITY,
   RBAC_MANAGE_CAPABILITY,
   STAFF_CREATE_DIRECT_CAPABILITY,
@@ -70,6 +73,10 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       ...[...MAKER_ENTITY_TYPES, WorkflowEntityType.STAFF].map((entityType) =>
         reviewCapability(entityType),
       ),
+      // Branch managers verify/reject head-office funding for their own
+      // branch — BranchFundingService additionally enforces "their own",
+      // this capability only gates "a manager, generically" (see PHASE_4_NOTES.md).
+      BRANCH_VERIFY_FUNDING_CAPABILITY,
     ],
   },
   {
@@ -80,6 +87,8 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       ...CONFIG_ENTITY_TYPES.map((entityType) => initiateCapability(entityType)),
       STAFF_DISABLE_CAPABILITY,
       ORG_MANAGE_CAPABILITY,
+      BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
+      BRANCH_FUND_CAPABILITY,
     ],
   },
   {
@@ -92,6 +101,8 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       RBAC_MANAGE_CAPABILITY,
       ORG_MANAGE_CAPABILITY,
       STAFF_CREATE_DIRECT_CAPABILITY,
+      BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
+      BRANCH_FUND_CAPABILITY,
     ],
   },
   {

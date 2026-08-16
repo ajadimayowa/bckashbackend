@@ -7,6 +7,7 @@ import { RequireCapability } from '../../platform/rbac/decorators/require-capabi
 import { CapabilityGuard } from '../../platform/rbac/guards/capability.guard';
 import { StaffContextGuard } from '../../platform/rbac/guards/staff-context.guard';
 import type { ResolvedStaffContext } from '../../platform/rbac/interfaces/staff-context.interface';
+import { BranchFundBalanceService } from './branch-fund-balance.service';
 import { BranchManagerAssignmentService } from './branch-manager-assignment.service';
 import { BranchesService } from './branches.service';
 import { AssignManagerDto } from './dto/assign-manager.dto';
@@ -22,6 +23,7 @@ export class BranchesController {
   constructor(
     private readonly branchesService: BranchesService,
     private readonly branchManagerAssignmentService: BranchManagerAssignmentService,
+    private readonly branchFundBalanceService: BranchFundBalanceService,
   ) {}
 
   @Post()
@@ -61,5 +63,13 @@ export class BranchesController {
   @Get(':id/manager-history')
   getManagerHistory(@Param('id') branchId: string): Promise<BranchManagerAssignment[]> {
     return this.branchManagerAssignmentService.getHistory(branchId);
+  }
+
+  @Get(':id/balance')
+  async getBalance(
+    @Param('id') branchId: string,
+  ): Promise<{ branchId: string; availableAmount: number }> {
+    const availableAmount = await this.branchFundBalanceService.getBalance(branchId);
+    return { branchId, availableAmount };
   }
 }

@@ -27,6 +27,16 @@ export const RBAC_MANAGE_CAPABILITY = 'rbac:manage';
 export const ORG_MANAGE_CAPABILITY = 'org:manage';
 /** SuperAdmin directly creating a MANAGER/ADMIN/APPROVER account, bypassing the workflow engine. */
 export const STAFF_CREATE_DIRECT_CAPABILITY = 'staff:create-direct';
+/** BranchBankAccount CRUD — deliberately not workflow-mediated, same reasoning as ORG_MANAGE_CAPABILITY. */
+export const BRANCH_MANAGE_ACCOUNTS_CAPABILITY = 'branch:manage_accounts';
+/** Head office recording a BranchFunding record (a two-party confirmation, not a workflow chain — see PHASE_4_NOTES.md). */
+export const BRANCH_FUND_CAPABILITY = 'branch:fund';
+/**
+ * Coarse gate for "the kind of staff who can ever verify/reject a funding
+ * record" — the specific rule ("must be *this branch's* current manager") is
+ * enforced in BranchFundingService, not by this capability alone.
+ */
+export const BRANCH_VERIFY_FUNDING_CAPABILITY = 'branch:verify_funding';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
