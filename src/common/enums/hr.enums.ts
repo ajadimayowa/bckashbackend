@@ -1,15 +1,20 @@
+/** Per the brief's own schema sketch — see modules/hr, PHASE_12_NOTES.md. */
+export enum LeaveApplicationStatus {
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  RETURNED_TO_MAKER = 'RETURNED_TO_MAKER',
+  CANCELLED = 'CANCELLED',
+}
+
 /**
- * TODO(business rule): leave type taxonomy is not specified in the brief. Using a
- * conventional Nigerian-employer default set as a placeholder — confirm the real
- * list (and any per-type entitlement/day-count rules) before Phase 12 builds the
- * leave application flow on top of this schema.
+ * Which of the three dynamically-selected leave approval chains an
+ * application was routed through — see LeaveApplicationService.applyForLeave
+ * and PHASE_12_NOTES.md for the full routing logic.
  */
-export enum LeaveType {
-  ANNUAL = 'ANNUAL',
-  SICK = 'SICK',
-  MATERNITY = 'MATERNITY',
-  PATERNITY = 'PATERNITY',
-  COMPASSIONATE = 'COMPASSIONATE',
-  UNPAID = 'UNPAID',
-  OTHER = 'OTHER',
+export enum LeaveChainAction {
+  APPROVE_STAFF = 'APPROVE_STAFF',
+  APPROVE_MANAGER = 'APPROVE_MANAGER',
+  APPROVE_ADMIN = 'APPROVE_ADMIN',
 }

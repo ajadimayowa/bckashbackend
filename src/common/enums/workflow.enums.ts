@@ -41,4 +41,8 @@ export enum WorkflowEntityType {
   // Added in Phase 10 — a single-step chain for free-form manual journal
   // entries. See modules/accounting, PHASE_10_NOTES.md.
   MANUAL_JOURNAL_ENTRY = 'MANUAL_JOURNAL_ENTRY',
+  // Added in Phase 12 — a single-step chain (Admin proposes, a different
+  // Admin/SuperAdmin approves) for salary structure changes. See
+  // modules/hr, PHASE_12_NOTES.md.
+  SALARY_RECORD = 'SALARY_RECORD',
 }

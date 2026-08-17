@@ -15,6 +15,7 @@ import { AccountingModule } from './modules/accounting/accounting.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { GroupsModule } from './modules/groups/groups.module';
+import { HrModule } from './modules/hr/hr.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { LoanProductsModule } from './modules/loan-products/loan-products.module';
 import { LoansModule } from './modules/loans/loans.module';
@@ -53,7 +54,22 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
 
     // Global — WorkflowEngineService (and, later, domain modules) inject
     // EventEmitter2 directly without re-importing this module.
-    EventEmitterModule.forRoot(),
+    //
+    // *** maxListeners raised in Phase 12 — see PHASE_12_NOTES.md ***
+    // Every domain module that reacts to a workflow outcome registers its
+    // own `@OnEvent(WORKFLOW_APPROVED_EVENT)` listener (Customer, Loan,
+    // Group, LoanProduct, FeeDefinition, Staff, ManualJournalEntry,
+    // RepaymentRecord, EarlyLiquidation, and — as of this phase — both
+    // LeaveApplication and SalaryRecord: 11 listeners on this one event
+    // name alone). EventEmitter2's default `maxListeners` is 10 — Phase 12
+    // was the one that pushed this over the default, surfaced by a genuine
+    // e2e failure (`app.init()` throwing while registering the 11th
+    // listener, since eventemitter2's own memory-leak-warning path itself
+    // errors on newer Node). Raised generously above the current real
+    // count (11), not tuned to the exact number, since this app's own
+    // future maintenance will likely keep adding listeners to this same
+    // handful of workflow events.
+    EventEmitterModule.forRoot({ maxListeners: 30 }),
 
     AuditModule,
     EncryptionModule,
@@ -69,6 +85,7 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
     NotificationsModule,
     LoansModule,
     RepaymentsModule,
+    HrModule,
   ],
   controllers: [HealthController],
 })

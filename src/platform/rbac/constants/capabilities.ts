@@ -76,6 +76,33 @@ export const ACCOUNTING_MANAGE_CAPABILITY = 'accounting:manage_accounts';
  * PHASE_11_NOTES.md.
  */
 export const NOTIFICATIONS_MANAGE_CAPABILITY = 'notifications:manage_dispatch';
+/**
+ * Gates viewing/managing *another* staff member's salary data — deliberately
+ * distinct from `ModuleName.HR` module access, and stricter than general
+ * leave administration, since compensation data is more sensitive than
+ * leave records. A staff member's own salary is always self-accessible
+ * regardless of this capability — see `HrSalaryController`,
+ * PHASE_12_NOTES.md.
+ */
+export const HR_SALARY_MANAGE_CAPABILITY = 'hr:salary:manage';
+/**
+ * Gates cancelling an *already-APPROVED* leave application — deliberately
+ * a flat capability (not `approveCapability(LEAVE_APPLICATION)`, which
+ * APPROVER also holds) so an applicant can't unilaterally undo approved
+ * leave without oversight, restricted to ADMIN/SUPERADMIN specifically, not
+ * every role that can act on a leave workflow step. Cancelling
+ * PENDING_REVIEW/PENDING_APPROVAL leave needs no special capability — the
+ * applicant can always withdraw their own not-yet-decided request. See
+ * PHASE_12_NOTES.md.
+ */
+export const LEAVE_CANCEL_APPROVED_CAPABILITY = 'leave:cancel_approved';
+/**
+ * Gates LeaveType CRUD — deliberately not workflow-mediated, same
+ * "structural configuration, not a money movement or per-case decision"
+ * reasoning as `ACCOUNTING_MANAGE_CAPABILITY`/`ORG_MANAGE_CAPABILITY`. See
+ * PHASE_12_NOTES.md for the flagged assumption this rests on.
+ */
+export const HR_LEAVE_TYPES_MANAGE_CAPABILITY = 'hr:leave_types:manage';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
@@ -109,4 +136,7 @@ export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
   LOAN_DISBURSEMENT_OPS_CAPABILITY,
   ACCOUNTING_MANAGE_CAPABILITY,
   NOTIFICATIONS_MANAGE_CAPABILITY,
+  HR_SALARY_MANAGE_CAPABILITY,
+  LEAVE_CANCEL_APPROVED_CAPABILITY,
+  HR_LEAVE_TYPES_MANAGE_CAPABILITY,
 ];

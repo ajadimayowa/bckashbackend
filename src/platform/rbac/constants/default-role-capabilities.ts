@@ -7,6 +7,9 @@ import {
   BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
   BRANCH_VERIFY_FUNDING_CAPABILITY,
   GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+  HR_LEAVE_TYPES_MANAGE_CAPABILITY,
+  HR_SALARY_MANAGE_CAPABILITY,
+  LEAVE_CANCEL_APPROVED_CAPABILITY,
   LOAN_DISBURSEMENT_OPS_CAPABILITY,
   NOTIFICATIONS_MANAGE_CAPABILITY,
   ORG_MANAGE_CAPABILITY,
@@ -65,6 +68,11 @@ const MAKER_ENTITY_TYPES: readonly WorkflowEntityType[] = [
 const CONFIG_ENTITY_TYPES: readonly WorkflowEntityType[] = [
   WorkflowEntityType.LOAN_PRODUCT,
   WorkflowEntityType.FEE_DEFINITION,
+  // Added in Phase 12 — Admin/SuperAdmin propose a salary change, a
+  // *different* Admin/SuperAdmin approves it (single-step chain, same
+  // "propose then a different admin-tier person approves" shape as
+  // LOAN_PRODUCT/FEE_DEFINITION). See modules/hr, PHASE_12_NOTES.md.
+  WorkflowEntityType.SALARY_RECORD,
 ];
 
 export interface RoleCapabilitiesSeed {
@@ -113,6 +121,9 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       LOAN_DISBURSEMENT_OPS_CAPABILITY,
       ACCOUNTING_MANAGE_CAPABILITY,
       NOTIFICATIONS_MANAGE_CAPABILITY,
+      HR_SALARY_MANAGE_CAPABILITY,
+      LEAVE_CANCEL_APPROVED_CAPABILITY,
+      HR_LEAVE_TYPES_MANAGE_CAPABILITY,
     ],
   },
   {
@@ -131,6 +142,9 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       LOAN_DISBURSEMENT_OPS_CAPABILITY,
       ACCOUNTING_MANAGE_CAPABILITY,
       NOTIFICATIONS_MANAGE_CAPABILITY,
+      HR_SALARY_MANAGE_CAPABILITY,
+      LEAVE_CANCEL_APPROVED_CAPABILITY,
+      HR_LEAVE_TYPES_MANAGE_CAPABILITY,
     ],
   },
   {
