@@ -48,6 +48,8 @@ export const envValidationSchema = Joi.object({
   // credentials above happen to be set.
   AWS_S3_USE_MOCK: Joi.boolean().default(false),
   AWS_REKOGNITION_FACE_MATCH_THRESHOLD: Joi.number().min(0).max(100).default(90),
+  // Mirrors AWS_S3_USE_MOCK — see configuration.ts.
+  AWS_REKOGNITION_USE_MOCK: Joi.boolean().default(false),
 
   BREVO_API_KEY: Joi.string().allow('').optional(),
   BREVO_SENDER_EMAIL: Joi.string().email().required(),

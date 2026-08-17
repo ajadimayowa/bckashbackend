@@ -31,6 +31,17 @@ export interface InitiateWorkflowInput {
   payload: Record<string, unknown>;
   initiatedBy: string;
   branchId?: string | null;
+  /**
+   * Optional — added in Phase 8. Every caller before Phase 8 (Staff/Customer/Group/
+   * LoanProduct/FeeDefinition) creates its domain entity only on approval, so
+   * `entityId` starts null and is backfilled later via `linkEntity`. Phase 8's Loan
+   * is the first entity created immediately at raise time (see
+   * `modules/loans/loans.service.ts`, PHASE_8_NOTES.md for why), so it already has
+   * a real id before calling `initiate` and can hand it over directly instead of a
+   * separate `linkEntity` follow-up call. Omitted/undefined preserves the exact
+   * prior behavior (`entityId: null`) for every existing caller.
+   */
+  entityId?: string | null;
 }
 
 export interface ActOnWorkflowInput {

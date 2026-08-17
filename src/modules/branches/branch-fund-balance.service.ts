@@ -1,18 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 
 import { BRANCH_CREATED_EVENT, BranchCreatedEvent } from './events/branch.events';
 import { InsufficientBranchFundsException } from './exceptions/insufficient-branch-funds.exception';
 import { BranchFundBalance, BranchFundBalanceDocument } from './schemas/branch-fund-balance.schema';
 
 /**
- * The fund-balance primitive Phase 8's disbursement flow will depend on.
+ * The fund-balance primitive Phase 8's disbursement flow depends on.
  * `credit`/`debit` both accept an optional Mongo `session` so callers can
  * compose the balance change into a larger multi-document transaction
  * (funding verification here; disbursement + loan status + ledger entry in
  * Phase 8) — see PHASE_4_NOTES.md.
+ *
+ * *** BUG FOUND AND FIXED IN PHASE 8 — SEE PHASE_8_NOTES.md ***
+ * Every method below now explicitly casts `branchId` to `Types.ObjectId` in
+ * its query filter/write payload — this file previously passed the plain
+ * `branchId` string straight through. That is the exact same family of bug
+ * documented for `KycRecord.customerId` in Phase 5 and for write-side
+ * `Model.create()` calls in Phase 6: a plain string filtered/written against
+ * a non-`_id` ObjectId-typed path does not reliably cast in this codebase's
+ * Mongoose setup. It went undetected by this module's own Phase 4 tests only
+ * because `handleBranchCreated`'s `$setOnInsert` also stored the uncast
+ * plain-string value — so every read/write in that one flow consistently
+ * used strings and coincidentally matched each other. Phase 8 hit it for
+ * real: a `BranchFundBalance` document created directly with a genuine
+ * `Types.ObjectId` `branchId` (as any spec/service outside this one
+ * self-consistent flow would do) was invisible to `getBalance`/`debit`,
+ * making every disbursement fail with a false
+ * `InsufficientBranchFundsException` regardless of actual balance —
+ * reproduced empirically while building `LoanVerificationService`.
  */
 @Injectable()
 export class BranchFundBalanceService {
@@ -26,12 +44,9 @@ export class BranchFundBalanceService {
   /** Idempotent — safe even if a balance doc already exists (e.g. re-fired event). */
   @OnEvent(BRANCH_CREATED_EVENT)
   async handleBranchCreated(event: BranchCreatedEvent): Promise<void> {
+    const branchId = new Types.ObjectId(event.branchId);
     await this.balanceModel
-      .updateOne(
-        { branchId: event.branchId },
-        { $setOnInsert: { branchId: event.branchId, availableAmount: 0 } },
-        { upsert: true },
-      )
+      .updateOne({ branchId }, { $setOnInsert: { branchId, availableAmount: 0 } }, { upsert: true })
       .exec();
     this.logger.log(`Initialized fund balance for branch ${event.branchId}`);
   }
@@ -50,7 +65,7 @@ export class BranchFundBalanceService {
   ): Promise<BranchFundBalanceDocument> {
     const result = await this.balanceModel
       .findOneAndUpdate(
-        { branchId },
+        { branchId: new Types.ObjectId(branchId) },
         { $inc: { availableAmount: amountKobo }, $set: { updatedAt: new Date() } },
         { new: true, upsert: true, session },
       )
@@ -79,7 +94,7 @@ export class BranchFundBalanceService {
   ): Promise<BranchFundBalanceDocument> {
     const result = await this.balanceModel
       .findOneAndUpdate(
-        { branchId, availableAmount: { $gte: amountKobo } },
+        { branchId: new Types.ObjectId(branchId), availableAmount: { $gte: amountKobo } },
         { $inc: { availableAmount: -amountKobo }, $set: { updatedAt: new Date() } },
         { new: true, session },
       )
@@ -92,7 +107,10 @@ export class BranchFundBalanceService {
 
   /** Zero for a branch with no funding history yet — never throws NotFound. */
   async getBalance(branchId: string): Promise<number> {
-    const doc = await this.balanceModel.findOne({ branchId }).lean().exec();
+    const doc = await this.balanceModel
+      .findOne({ branchId: new Types.ObjectId(branchId) })
+      .lean()
+      .exec();
     return doc?.availableAmount ?? 0;
   }
 }

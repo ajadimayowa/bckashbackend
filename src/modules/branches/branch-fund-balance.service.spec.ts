@@ -62,7 +62,10 @@ describe('BranchFundBalanceService', () => {
 
       await eventEmitter.emitAsync(BRANCH_CREATED_EVENT, { branchId });
 
-      const doc = await balanceModel.findOne({ branchId }).exec();
+      // Explicit cast — see BranchFundBalanceService's own doc comment
+      // (Phase 8 fix) on why a plain string filter against this ObjectId
+      // path isn't reliable in this codebase's Mongoose setup.
+      const doc = await balanceModel.findOne({ branchId: new Types.ObjectId(branchId) }).exec();
       expect(doc).not.toBeNull();
       expect(doc?.availableAmount).toBe(0);
     });

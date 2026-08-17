@@ -47,6 +47,17 @@ export const BRANCH_VERIFY_FUNDING_CAPABILITY = 'branch:verify_funding';
  * Admin/SuperAdmin/Approver to approve — see PHASE_6_NOTES.md.
  */
 export const GROUP_REASSIGN_LEADERSHIP_CAPABILITY = 'group:reassign_leadership';
+/**
+ * Gates the operational (non-workflow) pre-disbursement steps introduced in
+ * Phase 8 — `initiateMemberVerification`, a manual `checkAndDisburse` retry,
+ * and `confirmChequeHandover`. None of these are maker-checker actions (see
+ * PHASE_8_NOTES.md — verification outcomes aren't a proposal awaiting a
+ * second approver, they're a recorded fact), so a workflow-step capability
+ * doesn't fit; granted to the same roles that can raise a loan in the first
+ * place (MARKETER/MANAGER/ADMIN/SUPERADMIN). `resolveEscalation` deliberately
+ * uses `approveCapability(LOAN)` instead — see that method's own doc comment.
+ */
+export const LOAN_DISBURSEMENT_OPS_CAPABILITY = 'loan:disbursement_ops';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
@@ -77,4 +88,5 @@ export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
   BRANCH_FUND_CAPABILITY,
   BRANCH_VERIFY_FUNDING_CAPABILITY,
   GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+  LOAN_DISBURSEMENT_OPS_CAPABILITY,
 ];

@@ -6,6 +6,7 @@ import {
   BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
   BRANCH_VERIFY_FUNDING_CAPABILITY,
   GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+  LOAN_DISBURSEMENT_OPS_CAPABILITY,
   ORG_MANAGE_CAPABILITY,
   RBAC_MANAGE_CAPABILITY,
   STAFF_CREATE_DIRECT_CAPABILITY,
@@ -65,7 +66,14 @@ export interface RoleCapabilitiesSeed {
 export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
   {
     role: StaffRole.MARKETER,
-    capabilities: MAKER_ENTITY_TYPES.map((entityType) => initiateCapability(entityType)),
+    capabilities: [
+      ...MAKER_ENTITY_TYPES.map((entityType) => initiateCapability(entityType)),
+      // Phase 8: initiating pre-disbursement verification / a manual
+      // checkAndDisburse retry / confirming cheque handover — operational,
+      // not maker-checker, so a flat capability rather than a workflow-step
+      // one. See capabilities.ts's own comment and PHASE_8_NOTES.md.
+      LOAN_DISBURSEMENT_OPS_CAPABILITY,
+    ],
   },
   {
     role: StaffRole.MANAGER,
@@ -79,6 +87,7 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       // branch — BranchFundingService additionally enforces "their own",
       // this capability only gates "a manager, generically" (see PHASE_4_NOTES.md).
       BRANCH_VERIFY_FUNDING_CAPABILITY,
+      LOAN_DISBURSEMENT_OPS_CAPABILITY,
     ],
   },
   {
@@ -92,6 +101,7 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
       BRANCH_FUND_CAPABILITY,
       GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+      LOAN_DISBURSEMENT_OPS_CAPABILITY,
     ],
   },
   {
@@ -107,6 +117,7 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
       BRANCH_FUND_CAPABILITY,
       GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
+      LOAN_DISBURSEMENT_OPS_CAPABILITY,
     ],
   },
   {

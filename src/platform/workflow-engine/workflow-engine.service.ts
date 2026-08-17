@@ -187,7 +187,9 @@ export class WorkflowEngineService {
     const now = new Date();
     const created = await this.workflowRequestModel.create({
       entityType: input.entityType,
-      entityId: null,
+      // See InitiateWorkflowInput.entityId's doc comment — null unless a caller
+      // (Phase 8's Loan) already created its entity before initiating.
+      entityId: input.entityId ?? null,
       action: input.action,
       status: this.computeStatus(0, steps.length),
       chainConfigRef: `${input.entityType}:${input.action}`,

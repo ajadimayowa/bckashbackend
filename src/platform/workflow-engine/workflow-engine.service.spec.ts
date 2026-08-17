@@ -247,6 +247,36 @@ describe('WorkflowEngineService', () => {
 
       expect(request.status).toBe(WorkflowStatus.PENDING_APPROVAL);
     });
+
+    // Phase 8: Loan is created immediately at raise time (see PHASE_8_NOTES.md),
+    // so it already has a real id before calling initiate — unlike every prior
+    // caller, which starts with entityId: null and backfills via linkEntity.
+    it('accepts a pre-existing entityId at initiation time (Phase 8)', async () => {
+      await registerTwoStepChain('LOAN', 'APPROVE_product-1', true);
+
+      const request = await service.initiate({
+        entityType: 'LOAN',
+        action: 'APPROVE_product-1',
+        payload: { cumulativeAmountKobo: 500_000 },
+        initiatedBy: 'staff-A',
+        entityId: 'loan-123',
+      });
+
+      expect(request.entityId).toBe('loan-123');
+    });
+
+    it('still defaults entityId to null when omitted — existing callers are unaffected', async () => {
+      await registerTwoStepChain('GROUP', 'CREATE', true);
+
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+
+      expect(request.entityId).toBeNull();
+    });
   });
 
   describe('act — maker/checker enforcement', () => {

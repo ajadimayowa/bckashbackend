@@ -50,6 +50,7 @@ export interface AwsConfig {
   };
   rekognition: {
     faceMatchThreshold: number;
+    useMock: boolean;
   };
 }
 
@@ -131,6 +132,12 @@ export default (): RootConfig => {
       },
       rekognition: {
         faceMatchThreshold: parseInt(process.env.AWS_REKOGNITION_FACE_MATCH_THRESHOLD ?? '90', 10),
+        // Mirrors AWS_S3_USE_MOCK — same AWS credentials pair backs both S3 and
+        // Rekognition, so mock selection falls back on the same presence check.
+        useMock:
+          process.env.AWS_REKOGNITION_USE_MOCK === 'true' ||
+          !process.env.AWS_ACCESS_KEY_ID ||
+          !process.env.AWS_SECRET_ACCESS_KEY,
       },
     },
     brevo: {

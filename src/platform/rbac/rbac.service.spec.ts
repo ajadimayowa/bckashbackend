@@ -37,11 +37,19 @@ describe('RbacService', () => {
   });
 
   describe('default capability seed', () => {
-    it('gives MARKETER no review or approve capability, only initiate', async () => {
+    it('gives MARKETER no review or approve capability — only initiate plus flat operational capabilities', async () => {
       const capabilities = await rbacService.getCapabilitiesForRole(StaffRole.MARKETER);
 
       expect(capabilities.length).toBeGreaterThan(0);
-      expect(capabilities.every((c) => c.startsWith('workflow:initiate:'))).toBe(true);
+      expect(capabilities.some((c) => c.startsWith('workflow:initiate:'))).toBe(true);
+      expect(capabilities.some((c) => c.startsWith('workflow:review:'))).toBe(false);
+      expect(capabilities.some((c) => c.startsWith('workflow:approve:'))).toBe(false);
+      // Every capability is either an initiate-step one, or a flat,
+      // non-workflow operational capability (e.g. Phase 8's
+      // LOAN_DISBURSEMENT_OPS_CAPABILITY) — never review/approve either way.
+      expect(
+        capabilities.every((c) => c.startsWith('workflow:initiate:') || !c.startsWith('workflow:')),
+      ).toBe(true);
     });
 
     it('gives APPROVER no initiate or review capability, only approve', async () => {
