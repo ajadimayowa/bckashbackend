@@ -231,8 +231,54 @@ export class StaffService implements OnModuleInit {
     return staff;
   }
 
+  /**
+   * *** BUG FIX, DISCOVERED IN PHASE 11 — SEE PHASE_11_NOTES.md ***
+   * A raw string `branchId`/`departmentId` passed straight into `.find()`
+   * does not reliably auto-cast against this schema's `Types.ObjectId`
+   * fields in this project's Mongoose setup — found via a new test for
+   * `findActiveByRoleAndBranch` (also added in Phase 11) that failed with a
+   * silent empty-array result rather than a thrown error. Explicit casting
+   * fixes it; this means `GET /staff?branchId=...` was silently returning
+   * an empty list for any branch filter before this fix.
+   */
   async findAll(filter: { branchId?: string; departmentId?: string; status?: StaffStatus }) {
-    return this.staffModel.find(filter).sort({ createdAt: -1 }).exec();
+    const castFilter: Record<string, unknown> = { ...filter };
+    if (filter.branchId) {
+      castFilter.branchId = new Types.ObjectId(filter.branchId);
+    }
+    if (filter.departmentId) {
+      castFilter.departmentId = new Types.ObjectId(filter.departmentId);
+    }
+    return this.staffModel.find(castFilter).sort({ createdAt: -1 }).exec();
+  }
+
+  /**
+   * Added in Phase 11 for `NotificationService.resolveInvolvedParties` —
+   * batch lookup by id, silently skipping any id that no longer resolves
+   * (a staff record was never expected to disappear, but a resolver
+   * building a recipient list shouldn't throw over one stale id).
+   */
+  async findByIds(ids: string[]): Promise<StaffDocument[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.staffModel.find({ _id: { $in: ids } }).exec();
+  }
+
+  /**
+   * Added in Phase 11 — the branch-level Admin/SuperAdmin fallback in
+   * `resolveInvolvedParties` when no admin has acted on the related
+   * workflow request yet. Active staff only (a disabled Admin shouldn't be
+   * notified of anything new).
+   */
+  async findActiveByRoleAndBranch(roles: StaffRole[], branchId: string): Promise<StaffDocument[]> {
+    return this.staffModel
+      .find({
+        role: { $in: roles },
+        branchId: new Types.ObjectId(branchId),
+        status: StaffStatus.ACTIVE,
+      })
+      .exec();
   }
 
   /** Includes passwordHash — only ever called from AuthService for a login attempt. */

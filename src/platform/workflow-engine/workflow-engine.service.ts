@@ -497,6 +497,21 @@ export class WorkflowEngineService {
   }
 
   /**
+   * Added in Phase 11 — `NotificationService`'s `resolveInvolvedParties`
+   * needs to read a request's `steps` (to find which Admin/SuperAdmin acted
+   * on it) without reaching into the model directly from another module. A
+   * small, read-only addition; every mutation still goes exclusively through
+   * `initiate`/`act`/`resubmit` above. See PHASE_11_NOTES.md.
+   */
+  async getById(workflowRequestId: string): Promise<WorkflowRequestDocument> {
+    const request = await this.workflowRequestModel.findById(workflowRequestId).exec();
+    if (!request) {
+      throw new NotFoundException(`WorkflowRequest ${workflowRequestId} not found`);
+    }
+    return request;
+  }
+
+  /**
    * Backfills `entityId` once a domain module has actually created its entity
    * after an `workflow.approved` event — not in the original spec, added so
    * `getHistory` stays useful for "create" flows (which start with entityId: null).

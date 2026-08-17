@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
@@ -10,15 +10,18 @@ import {
 import { NotificationPort } from '../interfaces/notification-port.interface';
 
 /**
- * *** TEMPORARY — SEE PHASE_8_NOTES.md — MUST BE REPLACED IN PHASE 11 ***
- * Per the brief: "NotificationPort's stub should not be a pure no-op — write
- * each call to a PendingNotificationLog collection instead, so nothing is
- * silently lost." Every call below lands as `dispatched: false` — see
- * `PendingNotificationLog`'s own doc comment for what Phase 11 must do with
- * this backlog.
+ * *** RETAINED FOR TESTS ONLY AS OF PHASE 11 — SEE PHASE_11_NOTES.md ***
+ * `RealNotificationPort` (`modules/notifications`) is bound in production;
+ * this stub still backs the loans/repayments test fixtures that don't need
+ * real dispatch. Per the original Phase 8 brief: "should not be a pure
+ * no-op — write each call to a PendingNotificationLog collection instead."
+ * Every customer-facing call below still lands as `dispatched: false` — see
+ * `PendingNotificationLog`'s own doc comment.
  */
 @Injectable()
 export class PendingNotificationLogPort implements NotificationPort {
+  private readonly logger = new Logger(PendingNotificationLogPort.name);
+
   constructor(
     @InjectModel(PendingNotificationLog.name)
     private readonly pendingNotificationLogModel: Model<PendingNotificationLogDocument>,
@@ -61,6 +64,26 @@ export class PendingNotificationLogPort implements NotificationPort {
 
   async sendPenaltyCharged(customerId: string, amountKobo: number, context: string): Promise<void> {
     await this.enqueue(NotificationTrigger.PENALTY_CHARGED, customerId, { amountKobo, context });
+  }
+
+  /**
+   * Staff-facing (see NotificationPort's own doc comment) — doesn't fit
+   * PendingNotificationLog's customer-shaped schema (`recipientCustomerId`
+   * is a Customer ref, and there's no single customer recipient here), so
+   * this deliberately doesn't write to that collection. A logged no-op is
+   * sufficient for a test-only stub — tests assert on this method being
+   * called (spy), not on any persisted side effect.
+   */
+  sendRepaymentDisputeRaised(params: {
+    repaymentRecordId: string;
+    branchId: string;
+    recordedBy: string;
+    raisedBy: string;
+    reason: string;
+    relatedWorkflowRequestId: string;
+  }): Promise<void> {
+    this.logger.log(`[STUB] Repayment dispute raised: ${JSON.stringify(params)}`);
+    return Promise.resolve();
   }
 
   private async enqueue(

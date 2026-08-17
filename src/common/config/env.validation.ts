@@ -54,8 +54,25 @@ export const envValidationSchema = Joi.object({
   BREVO_API_KEY: Joi.string().allow('').optional(),
   BREVO_SENDER_EMAIL: Joi.string().email().required(),
   BREVO_SENDER_NAME: Joi.string().required(),
+  // Phase 11 (platform/integrations/brevo) — SMTP relay send. Optional: the
+  // mock email adapter is used whenever these are absent (or BREVO_USE_MOCK
+  // is explicitly true) — see configuration.ts/brevo.module.ts.
+  MAIL_FROM: Joi.string().allow('').optional(),
+  BREVO_SMTP_HOST: Joi.string().allow('').optional(),
+  BREVO_SMTP_PORT: Joi.number().port().optional(),
+  BREVO_SMTP_SECURE: Joi.boolean().optional(),
+  BREVO_SMTP_LOGIN: Joi.string().allow('').optional(),
+  BREVO_SMTP_KEY: Joi.string().allow('').optional(),
+  BREVO_USE_MOCK: Joi.boolean().default(false),
 
   TERMII_API_KEY: Joi.string().allow('').optional(),
   TERMII_SENDER_ID: Joi.string().required(),
   TERMII_BASE_URL: Joi.string().uri().required(),
+  // Mirrors BVN_QUERY_USE_MOCK — see configuration.ts.
+  TERMII_USE_MOCK: Joi.boolean().default(false),
+
+  // Phase 11 (modules/notifications) — BullMQ retry policy, named constants
+  // rather than hardcoded magic numbers per the brief's own instruction.
+  NOTIFICATION_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
+  NOTIFICATION_BACKOFF_BASE_DELAY_MS: Joi.number().integer().positive().default(5000),
 });

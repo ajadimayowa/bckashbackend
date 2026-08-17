@@ -51,6 +51,10 @@ import {
   LEDGER_POSTING_PORT,
   LedgerPostingPort,
 } from '../loans/interfaces/ledger-posting-port.interface';
+import {
+  NOTIFICATION_PORT,
+  NotificationPort,
+} from '../loans/interfaces/notification-port.interface';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { REPAYMENT_APPLIED_EVENT, RepaymentAppliedEvent } from './events/repayments.events';
 import {
@@ -86,6 +90,8 @@ export class RepaymentsService implements OnModuleInit {
     private readonly eventEmitter: EventEmitter2,
     @Inject(LEDGER_POSTING_PORT) private readonly ledgerPostingPort: LedgerPostingPort,
     @Inject(S3_ADAPTER) private readonly s3Adapter: S3Adapter,
+    // Phase 11 retrofit — see raiseDispute's own comment and PHASE_11_NOTES.md.
+    @Inject(NOTIFICATION_PORT) private readonly notificationPort: NotificationPort,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -508,6 +514,27 @@ export class RepaymentsService implements OnModuleInit {
       entityType: 'REPAYMENT_RECORD',
       entityId: repaymentId,
       after: { status: RepaymentStatus.UNDER_DISPUTE, reason },
+    });
+
+    // *** PHASE 11 CROSS-PHASE RETROFIT — see PHASE_11_NOTES.md. Not part of
+    // this method's original Phase 9 scope (notification wasn't built yet);
+    // added when NotificationPort gained a real implementation. Staff-facing
+    // — see NotificationPort.sendRepaymentDisputeRaised's own doc comment.
+    // `relatedWorkflowRequestId` is the original REPAYMENT_RECORD approval
+    // chain for this record (the first — and, in practice, only — one on
+    // file), so the involved-parties resolver can find which Admin/
+    // SuperAdmin already acted on it. ***
+    const history = await this.workflowEngineService.getHistory(
+      WorkflowEntityType.REPAYMENT_RECORD,
+      repaymentId,
+    );
+    await this.notificationPort.sendRepaymentDisputeRaised({
+      repaymentRecordId: repaymentId,
+      branchId: updated.branchId.toString(),
+      recordedBy: updated.recordedBy.toString(),
+      raisedBy: actorId,
+      reason,
+      relatedWorkflowRequestId: history[0]?._id.toString() ?? '',
     });
 
     return updated;

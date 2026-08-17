@@ -54,16 +54,43 @@ export interface AwsConfig {
   };
 }
 
+/**
+ * *** RECONCILED IN PHASE 11 — SEE PHASE_11_NOTES.md ***
+ * `apiKey`/`senderEmail`/`senderName` were Phase 1/2 placeholder fields
+ * (unused until now). Phase 11's brief calls for SMTP-based sending via
+ * Nodemailer specifically — this codebase's `.env` already had the SMTP
+ * fields prepared (commented out, real-looking values matching Brevo's own
+ * "your API key doubles as the SMTP password" convention), so `smtp` was
+ * added rather than introducing a second, differently-named config surface.
+ * `senderEmail`/`senderName` remain the From header source (`mailFrom`
+ * optionally overrides with a full "Name <email>" string, per the brief's
+ * own MAIL_FROM convention — new, since no such override existed before).
+ */
 export interface BrevoConfig {
   apiKey?: string;
   senderEmail: string;
   senderName: string;
+  mailFrom?: string;
+  smtp: {
+    host: string;
+    port: number;
+    secure: boolean;
+    login?: string;
+    key?: string;
+  };
+  useMock: boolean;
 }
 
 export interface TermiiConfig {
   apiKey?: string;
   senderId: string;
   baseUrl: string;
+  useMock: boolean;
+}
+
+export interface NotificationConfig {
+  maxAttempts: number;
+  backoffBaseDelayMs: number;
 }
 
 export interface RootConfig {
@@ -76,6 +103,7 @@ export interface RootConfig {
   aws: AwsConfig;
   brevo: BrevoConfig;
   termii: TermiiConfig;
+  notification: NotificationConfig;
 }
 
 export default (): RootConfig => {
@@ -144,11 +172,30 @@ export default (): RootConfig => {
       apiKey: process.env.BREVO_API_KEY || undefined,
       senderEmail: process.env.BREVO_SENDER_EMAIL ?? '',
       senderName: process.env.BREVO_SENDER_NAME ?? '',
+      mailFrom: process.env.MAIL_FROM || undefined,
+      smtp: {
+        host: process.env.BREVO_SMTP_HOST ?? 'smtp-relay.brevo.com',
+        port: parseInt(process.env.BREVO_SMTP_PORT ?? '465', 10),
+        secure: process.env.BREVO_SMTP_SECURE !== 'false',
+        login: process.env.BREVO_SMTP_LOGIN || undefined,
+        key: process.env.BREVO_SMTP_KEY || undefined,
+      },
+      // Mirrors BVN_QUERY_USE_MOCK/AWS_S3_USE_MOCK: explicit override, or
+      // fall back to mock whenever the SMTP credentials aren't present.
+      useMock:
+        process.env.BREVO_USE_MOCK === 'true' ||
+        !process.env.BREVO_SMTP_LOGIN ||
+        !process.env.BREVO_SMTP_KEY,
     },
     termii: {
       apiKey: process.env.TERMII_API_KEY || undefined,
       senderId: process.env.TERMII_SENDER_ID ?? '',
       baseUrl: process.env.TERMII_BASE_URL ?? '',
+      useMock: process.env.TERMII_USE_MOCK === 'true' || !process.env.TERMII_API_KEY,
+    },
+    notification: {
+      maxAttempts: parseInt(process.env.NOTIFICATION_MAX_ATTEMPTS ?? '5', 10),
+      backoffBaseDelayMs: parseInt(process.env.NOTIFICATION_BACKOFF_BASE_DELAY_MS ?? '5000', 10),
     },
   };
 };

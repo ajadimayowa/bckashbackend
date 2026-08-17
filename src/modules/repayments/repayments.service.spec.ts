@@ -245,6 +245,42 @@ describe('RepaymentsService', () => {
       expect(accountAfter!.outstandingBalanceKobo).toBe(balanceBefore);
     });
 
+    // *** PHASE 11 CROSS-PHASE RETROFIT REGRESSION TEST — see PHASE_11_NOTES.md.
+    // Phase 9's raiseDispute never called NotificationPort when it was built;
+    // this confirms the Phase 11 retrofit actually wired the call in. ***
+    it('raising a dispute calls NotificationPort.sendRepaymentDisputeRaised with the correct recordedBy/raisedBy/reason payload', async () => {
+      const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx);
+      const accountId = memberLoanAccountIds[0]!;
+      const { record } = await ctx.repaymentsService.recordRepayment(
+        {
+          memberLoanAccountId: accountId,
+          branchBankAccountId: ctx.branchBankAccountId,
+          channel: 'BANK_TRANSFER' as never,
+          transactionReference: `TXN-${Date.now()}`,
+          amountKobo: 10_000,
+          paymentDate: new Date().toISOString(),
+        },
+        ctx.INITIATOR_ID,
+      );
+      const disputeSpy = jest.spyOn(ctx.pendingNotificationLogPort, 'sendRepaymentDisputeRaised');
+
+      await ctx.repaymentsService.raiseDispute(
+        record._id.toString(),
+        ctx.APPROVER_ID,
+        'Customer says amount is wrong',
+      );
+
+      expect(disputeSpy).toHaveBeenCalledTimes(1);
+      expect(disputeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repaymentRecordId: record._id.toString(),
+          recordedBy: ctx.INITIATOR_ID,
+          raisedBy: ctx.APPROVER_ID,
+          reason: 'Customer says amount is wrong',
+        }),
+      );
+    });
+
     it('raising a dispute against an APPROVED record reverses the balance atomically, exactly once even under a double-raise', async () => {
       const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx);
       const accountId = memberLoanAccountIds[0]!;

@@ -68,6 +68,14 @@ export const LOAN_DISBURSEMENT_OPS_CAPABILITY = 'loan:disbursement_ops';
  * (`@RequireModule`), not this capability — see AccountingController.
  */
 export const ACCOUNTING_MANAGE_CAPABILITY = 'accounting:manage_accounts';
+/**
+ * Gates the two Admin-facing notification-ops endpoints added in Phase 11:
+ * manually triggering the `PendingNotificationLog` backlog drain, and
+ * querying `NotificationDeadLetterLog`. Deliberately an explicit endpoint,
+ * not something run automatically on every deploy/boot — see
+ * PHASE_11_NOTES.md.
+ */
+export const NOTIFICATIONS_MANAGE_CAPABILITY = 'notifications:manage_dispatch';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
@@ -100,4 +108,5 @@ export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
   GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
   LOAN_DISBURSEMENT_OPS_CAPABILITY,
   ACCOUNTING_MANAGE_CAPABILITY,
+  NOTIFICATIONS_MANAGE_CAPABILITY,
 ];

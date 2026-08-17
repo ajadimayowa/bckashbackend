@@ -18,6 +18,7 @@ import { GroupsModule } from './modules/groups/groups.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { LoanProductsModule } from './modules/loan-products/loan-products.module';
 import { LoansModule } from './modules/loans/loans.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RepaymentsModule } from './modules/repayments/repayments.module';
 
 @Module({
@@ -65,6 +66,7 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
     GroupsModule,
     LoanProductsModule,
     AccountingModule,
+    NotificationsModule,
     LoansModule,
     RepaymentsModule,
   ],

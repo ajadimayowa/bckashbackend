@@ -30,4 +30,8 @@ export enum NotificationTrigger {
   PENALTY_CHARGED = 'PENALTY_CHARGED',
   ACCOUNT_DISABLED = 'ACCOUNT_DISABLED',
   FUNDING_REMINDER = 'FUNDING_REMINDER',
+  // Added in Phase 11 — no call site yet (Phase 12/HR's job to wire), but a
+  // template is registered for it now per the brief's own NotificationType
+  // list. See PHASE_11_NOTES.md.
+  STAFF_ONBOARDING_OUTCOME = 'STAFF_ONBOARDING_OUTCOME',
 }

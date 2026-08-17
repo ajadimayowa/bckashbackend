@@ -18,13 +18,8 @@ import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
 import { GroupsModule } from '../groups/groups.module';
 import { IdentityModule } from '../identity/identity.module';
 import { LoanProductsModule } from '../loan-products/loan-products.module';
-// PendingNotificationLog belongs to the (not-yet-built) notifications
-// module — see that schema's own doc comment for why it's registered here
-// rather than via a NotificationsModule that doesn't exist yet.
-import {
-  PendingNotificationLog,
-  PendingNotificationLogSchema,
-} from '../notifications/schemas/pending-notification-log.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { RealNotificationPort } from '../notifications/real-notification.port';
 import { StubBankTransferPort } from './bank-transfer/stub-bank-transfer.port';
 import { FeePaymentsController } from './fee-payments.controller';
 import { FeePaymentsService } from './fee-payments.service';
@@ -35,7 +30,6 @@ import { LoanVerificationController } from './loan-verification.controller';
 import { LoanVerificationService } from './loan-verification.service';
 import { LoansController } from './loans.controller';
 import { LoansService } from './loans.service';
-import { PendingNotificationLogPort } from './notifications/pending-notification-log.port';
 import {
   DisbursementVerification,
   DisbursementVerificationSchema,
@@ -51,7 +45,6 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
       { name: MemberLoanAccount.name, schema: MemberLoanAccountSchema },
       { name: DisbursementVerification.name, schema: DisbursementVerificationSchema },
       { name: FeePayment.name, schema: FeePaymentSchema },
-      { name: PendingNotificationLog.name, schema: PendingNotificationLogSchema },
       { name: Customer.name, schema: CustomerSchema },
     ]),
     WorkflowEngineModule,
@@ -64,6 +57,10 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
     // Phase 10 — the real LEDGER_POSTING_PORT implementation. No cycle:
     // AccountingModule has no dependency on modules/loans at all.
     AccountingModule,
+    // Phase 11 — the real NOTIFICATION_PORT implementation. Same "no cycle"
+    // shape: NotificationsModule depends on modules/loans only for the raw
+    // Loan schema (read-only), not LoansModule itself.
+    NotificationsModule,
   ],
   controllers: [LoansController, LoanVerificationController, FeePaymentsController],
   providers: [
@@ -71,15 +68,14 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
     LoanVerificationService,
     FeePaymentsService,
     // *** LEDGER_POSTING_PORT rebound to the real implementation in Phase 10
-    // — see PHASE_10_NOTES.md for confirmation every Phase 8/9 call site was
-    // reconciled to the finalized interface shape. StubLedgerPostingPort
-    // remains only for tests that don't need real postings (still imported
-    // by ./ledger/stub-ledger-posting.port.ts's own test consumers).
-    // NOTIFICATION_PORT is still TEMPORARY — Phase 11 must rebind it and
-    // drain the PendingNotificationLog backlog it leaves behind.
+    // — see PHASE_10_NOTES.md. NOTIFICATION_PORT rebound to the real
+    // implementation in Phase 11 — see PHASE_11_NOTES.md for confirmation
+    // every Phase 8/9 stub call site now resolves to a real dispatch, and
+    // for the backlog-drain admin endpoint. PendingNotificationLogPort
+    // (the old stub) remains only for tests that don't need real dispatch.
     // BANK_TRANSFER_PORT has no assigned rebinding phase yet. ***
     { provide: LEDGER_POSTING_PORT, useExisting: LedgerPostingService },
-    { provide: NOTIFICATION_PORT, useClass: PendingNotificationLogPort },
+    { provide: NOTIFICATION_PORT, useExisting: RealNotificationPort },
     { provide: BANK_TRANSFER_PORT, useClass: StubBankTransferPort },
   ],
   // LEDGER_POSTING_PORT/NOTIFICATION_PORT exported (not BANK_TRANSFER_PORT,
