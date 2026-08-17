@@ -4,6 +4,7 @@ import { HydratedDocument, Types } from 'mongoose';
 import {
   FeeCalcType,
   InterestType,
+  PenaltyFrequency,
   PenaltyPercentageBasis,
   ProductStatus,
 } from '../../../common/enums/loan-product.enums';
@@ -27,12 +28,34 @@ export class PenaltyRule {
   @Prop({ type: Number, required: true })
   value!: number;
 
-  /** Required iff calcType === PERCENTAGE. Never PRINCIPAL — a loan already exists by the time a penalty applies. */
+  /** Required iff calcType === PERCENTAGE. See PenaltyPercentageBasis's own doc comment re: PRINCIPAL (added in Phase 9). */
   @Prop({ type: String, enum: PenaltyPercentageBasis, default: null })
   percentageOf!: PenaltyPercentageBasis | null;
 
   @Prop({ type: Number, required: true })
   gracePeriodDays!: number;
+
+  /**
+   * Added in Phase 9 (see PHASE_9_NOTES.md) — Phase 7 only ever built
+   * ONE_TIME behavior with no field to express it. Defaults to ONE_TIME so
+   * every LoanProduct created before this phase (schema-wise; none were ever
+   * actually deployed) behaves unchanged.
+   */
+  @Prop({
+    type: String,
+    enum: PenaltyFrequency,
+    required: true,
+    default: PenaltyFrequency.ONE_TIME,
+  })
+  frequency!: PenaltyFrequency;
+
+  /** Required iff frequency === RECURRING; null/ignored for ONE_TIME. */
+  @Prop({ type: Number, default: null })
+  recurrenceIntervalDays!: number | null;
+
+  /** Optional even when RECURRING — null means "no cap, charge indefinitely". */
+  @Prop({ type: Number, default: null })
+  maxRecurrences!: number | null;
 }
 
 export const PenaltyRuleSchema = SchemaFactory.createForClass(PenaltyRule);

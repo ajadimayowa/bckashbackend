@@ -14,3 +14,9 @@ export function buildKycObjectKey(
   const ext = fileExtension.replace(/^\./, '').toLowerCase();
   return `kyc/${customerId}/${documentType}/${randomUUID()}.${ext}`;
 }
+
+/** `repayments/{repaymentId}/{uuid}.{ext}` — same namespacing convention as buildKycObjectKey. Added in Phase 9 for RepaymentRecord.proofOfPaymentImageKey. */
+export function buildRepaymentProofObjectKey(repaymentId: string, fileExtension: string): string {
+  const ext = fileExtension.replace(/^\./, '').toLowerCase();
+  return `repayments/${repaymentId}/${randomUUID()}.${ext}`;
+}

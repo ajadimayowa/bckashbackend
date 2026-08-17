@@ -34,5 +34,8 @@ export enum WorkflowEntityType {
   LOAN_PRODUCT = 'LOAN_PRODUCT',
   FEE_DEFINITION = 'FEE_DEFINITION',
   REPAYMENT_RECORD = 'REPAYMENT_RECORD',
+  // Added in Phase 9 — a single-step chain, distinct from REPAYMENT_RECORD's
+  // two-step chain. See modules/repayments, PHASE_9_NOTES.md.
+  EARLY_LIQUIDATION = 'EARLY_LIQUIDATION',
   LEAVE_APPLICATION = 'LEAVE_APPLICATION',
 }

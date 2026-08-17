@@ -14,6 +14,7 @@ import {
   FeeCategory,
   FeeTiming,
   InterestType,
+  PenaltyFrequency,
 } from '../../common/enums/loan-product.enums';
 import {
   DisbursementChannel,
@@ -417,7 +418,12 @@ describe('LoansService & LoanVerificationService', () => {
       approvalChainSteps: [
         { order: 0, requiredCapability: approveCapability(WorkflowEntityType.LOAN) },
       ],
-      penaltyRule: { calcType: FeeCalcType.FIXED, value: 1_000, gracePeriodDays: 5 },
+      penaltyRule: {
+        calcType: FeeCalcType.FIXED,
+        value: 1_000,
+        gracePeriodDays: 5,
+        frequency: PenaltyFrequency.ONE_TIME,
+      },
       ...overrides,
     };
   }

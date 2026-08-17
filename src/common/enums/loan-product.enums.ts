@@ -50,8 +50,23 @@ export enum FeeAppliesTo {
   PER_GROUP = 'PER_GROUP',
 }
 
-/** Percentage bases a *penalty* can be computed against — never PRINCIPAL (a loan already exists by the time a penalty applies). */
+/**
+ * Percentage bases a *penalty* (or, from Phase 9, a recurring early-liquidation
+ * delay charge) can be computed against.
+ *
+ * REVERSAL FLAGGED IN PHASE 9 (see PHASE_9_NOTES.md): this enum originally had
+ * no `PRINCIPAL` member, with this file's own comment stating "never PRINCIPAL
+ * — a loan already exists by the time a penalty applies." Phase 9's brief
+ * explicitly requires `PRINCIPAL` as a valid, *non-compounding* basis (its
+ * whole point is that charging against the fixed original principal — instead
+ * of the growing outstanding balance — produces a flat, non-compounding
+ * recurring charge, in contrast to OUTSTANDING/OVERDUE_AMOUNT which compound
+ * as unpaid penalties are folded back into the balance). Phase 7's original
+ * reasoning wasn't wrong for a *single* penalty application, but didn't
+ * anticipate recurring, period-based charges — re-added here to support that.
+ */
 export enum PenaltyPercentageBasis {
+  PRINCIPAL = 'PRINCIPAL',
   OUTSTANDING = 'OUTSTANDING',
   OVERDUE_AMOUNT = 'OVERDUE_AMOUNT',
 }
@@ -59,6 +74,22 @@ export enum PenaltyPercentageBasis {
 export enum InterestType {
   FLAT = 'FLAT',
   REDUCING = 'REDUCING',
+}
+
+/**
+ * Added in Phase 9 — see PHASE_9_NOTES.md. Governs both `LoanProduct.penaltyRule`
+ * (overdue-installment penalties) and `FeeDefinition` (specifically an
+ * EARLY_LIQUIDATION-category fee's recurring delay charge once a liquidation
+ * request is approved but not yet settled — see `modules/repayments`).
+ * ONE_TIME: a single charge, applied at most once per (installment |
+ * liquidation request) — Phase 7's original, only behavior.
+ * RECURRING: a fresh charge every `recurrenceIntervalDays`, up to
+ * `maxRecurrences` if set — see PenaltySweepService for the idempotent
+ * period-index mechanism that makes this safe to compute repeatedly.
+ */
+export enum PenaltyFrequency {
+  ONE_TIME = 'ONE_TIME',
+  RECURRING = 'RECURRING',
 }
 
 /**

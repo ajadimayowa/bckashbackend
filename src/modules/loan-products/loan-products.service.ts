@@ -6,6 +6,7 @@ import { Model, Types } from 'mongoose';
 import {
   FeeCalcType,
   InterestType,
+  PenaltyFrequency,
   PenaltyPercentageBasis,
   ProductStatus,
 } from '../../common/enums/loan-product.enums';
@@ -136,6 +137,16 @@ export class LoanProductsService implements OnModuleInit {
         'penaltyRule.percentageOf is required when penaltyRule.calcType is PERCENTAGE',
       );
     }
+    // Added in Phase 9 (see PHASE_9_NOTES.md) — same normalize/validate
+    // shape as the calcType/percentageOf pairing above: RECURRING requires
+    // recurrenceIntervalDays; ONE_TIME normalizes both recurrence fields to
+    // null even if supplied.
+    const frequency = dto.frequency;
+    if (frequency === PenaltyFrequency.RECURRING && !dto.recurrenceIntervalDays) {
+      throw new BadRequestException(
+        'penaltyRule.recurrenceIntervalDays is required when penaltyRule.frequency is RECURRING',
+      );
+    }
     return {
       calcType: dto.calcType,
       value: dto.value,
@@ -144,6 +155,11 @@ export class LoanProductsService implements OnModuleInit {
           ? (dto.percentageOf as PenaltyPercentageBasis)
           : null,
       gracePeriodDays: dto.gracePeriodDays,
+      frequency,
+      recurrenceIntervalDays:
+        frequency === PenaltyFrequency.RECURRING ? (dto.recurrenceIntervalDays ?? null) : null,
+      maxRecurrences:
+        frequency === PenaltyFrequency.RECURRING ? (dto.maxRecurrences ?? null) : null,
     };
   }
 

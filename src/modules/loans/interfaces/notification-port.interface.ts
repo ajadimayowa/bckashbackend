@@ -18,4 +18,13 @@ export interface NotificationPort {
   ): Promise<void>;
   sendVerificationEscalation(loanId: string, customerId: string, reason: string): Promise<void>;
   sendDisbursementCompleted(customerId: string, amountKobo: number, channel: string): Promise<void>;
+  /**
+   * Added in Phase 9 (`modules/repayments`) — reused for BOTH an overdue-
+   * installment penalty charge and an early-liquidation recurring delay
+   * charge (a delay charge is functionally a penalty, just scoped to a
+   * liquidation request — see `LedgerPostingPort.postPenalty`'s identical
+   * reuse). `context` is a short human-readable description of which charge
+   * this is (e.g. "Installment 3 recurring overdue penalty (period 1)").
+   */
+  sendPenaltyCharged(customerId: string, amountKobo: number, context: string): Promise<void>;
 }

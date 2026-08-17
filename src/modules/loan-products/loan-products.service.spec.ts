@@ -9,6 +9,7 @@ import {
   FeeCategory,
   FeeTiming,
   InterestType,
+  PenaltyFrequency,
   ProductStatus,
 } from '../../common/enums/loan-product.enums';
 import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
@@ -115,7 +116,12 @@ describe('LoanProductsService', () => {
         { order: 0, requiredCapability: reviewCapability(WorkflowEntityType.LOAN) },
         { order: 1, requiredCapability: approveCapability(WorkflowEntityType.LOAN) },
       ],
-      penaltyRule: { calcType: FeeCalcType.FIXED, value: 1_000, gracePeriodDays: 5 },
+      penaltyRule: {
+        calcType: FeeCalcType.FIXED,
+        value: 1_000,
+        gracePeriodDays: 5,
+        frequency: PenaltyFrequency.ONE_TIME,
+      },
       ...overrides,
     };
   }
@@ -242,7 +248,12 @@ describe('LoanProductsService', () => {
       await expect(
         service.initiateCreation(
           productDto({
-            penaltyRule: { calcType: FeeCalcType.PERCENTAGE, value: 500, gracePeriodDays: 5 },
+            penaltyRule: {
+              calcType: FeeCalcType.PERCENTAGE,
+              value: 500,
+              gracePeriodDays: 5,
+              frequency: PenaltyFrequency.ONE_TIME,
+            },
           }),
           INITIATOR_ID,
         ),

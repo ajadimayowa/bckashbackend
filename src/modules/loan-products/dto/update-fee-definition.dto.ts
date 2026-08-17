@@ -17,6 +17,7 @@ import {
   FeeCategory,
   FeePercentageBasis,
   FeeTiming,
+  PenaltyFrequency,
 } from '../../../common/enums/loan-product.enums';
 
 /** Every field optional — only the fields present are changed. See FeeDefinitionsService.initiateUpdate. */
@@ -60,4 +61,19 @@ export class UpdateFeeDefinitionDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  /** Added in Phase 9 — see fee-definition.schema.ts. */
+  @IsOptional()
+  @IsEnum(PenaltyFrequency)
+  frequency?: PenaltyFrequency;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  recurrenceIntervalDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxRecurrences?: number;
 }

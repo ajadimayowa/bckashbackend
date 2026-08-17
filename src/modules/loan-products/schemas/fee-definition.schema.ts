@@ -7,6 +7,7 @@ import {
   FeeCategory,
   FeePercentageBasis,
   FeeTiming,
+  PenaltyFrequency,
 } from '../../../common/enums/loan-product.enums';
 
 export type FeeDefinitionDocument = HydratedDocument<FeeDefinition>;
@@ -43,6 +44,31 @@ export class FeeDefinition {
 
   @Prop({ type: String, enum: FeeAppliesTo, required: true })
   appliesTo!: FeeAppliesTo;
+
+  /**
+   * Added in Phase 9 (see PHASE_9_NOTES.md) — meaningful today only for an
+   * EARLY_LIQUIDATION-category fee: RECURRING means an approved-but-unsettled
+   * `EarlyLiquidationRequest` accrues an additional delay charge every
+   * `recurrenceIntervalDays` (see `modules/repayments/penalty-sweep.service.ts`).
+   * Defaults to ONE_TIME (Phase 7's only behavior — a single fee captured once
+   * at request time) for every other category, where recurrence has no
+   * defined meaning.
+   */
+  @Prop({
+    type: String,
+    enum: PenaltyFrequency,
+    required: true,
+    default: PenaltyFrequency.ONE_TIME,
+  })
+  frequency!: PenaltyFrequency;
+
+  /** Required iff frequency === RECURRING; null/ignored for ONE_TIME. */
+  @Prop({ type: Number, default: null })
+  recurrenceIntervalDays!: number | null;
+
+  /** Optional even when RECURRING — null means "no cap, charge indefinitely". */
+  @Prop({ type: Number, default: null })
+  maxRecurrences!: number | null;
 
   /**
    * Admin-set at fee-creation/update time, not automatically kept in sync

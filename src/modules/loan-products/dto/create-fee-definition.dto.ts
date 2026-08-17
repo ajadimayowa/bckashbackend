@@ -16,6 +16,7 @@ import {
   FeeCategory,
   FeePercentageBasis,
   FeeTiming,
+  PenaltyFrequency,
 } from '../../../common/enums/loan-product.enums';
 
 export class CreateFeeDefinitionDto {
@@ -54,4 +55,21 @@ export class CreateFeeDefinitionDto {
   @IsArray()
   @IsMongoId({ each: true })
   productIds?: string[];
+
+  /** Added in Phase 9 — see fee-definition.schema.ts. Defaults to ONE_TIME if omitted. */
+  @IsOptional()
+  @IsEnum(PenaltyFrequency)
+  frequency?: PenaltyFrequency;
+
+  /** Required when frequency is RECURRING — validated by FeeDefinitionsService. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  recurrenceIntervalDays?: number;
+
+  /** Optional even when RECURRING — omitted means no cap. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxRecurrences?: number;
 }

@@ -71,6 +71,16 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
     { provide: NOTIFICATION_PORT, useClass: PendingNotificationLogPort },
     { provide: BANK_TRANSFER_PORT, useClass: StubBankTransferPort },
   ],
-  exports: [LoansService, LoanVerificationService, FeePaymentsService],
+  // LEDGER_POSTING_PORT/NOTIFICATION_PORT exported (not BANK_TRANSFER_PORT,
+  // which no other module needs) so Phase 9's RepaymentsModule can reuse the
+  // exact same bound singleton rather than registering a second, separately
+  // rebound instance of the same conceptual port. See PHASE_9_NOTES.md.
+  exports: [
+    LoansService,
+    LoanVerificationService,
+    FeePaymentsService,
+    LEDGER_POSTING_PORT,
+    NOTIFICATION_PORT,
+  ],
 })
 export class LoansModule {}

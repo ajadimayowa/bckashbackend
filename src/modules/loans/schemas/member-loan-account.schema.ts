@@ -13,11 +13,21 @@ export type MemberLoanAccountDocument = HydratedDocument<MemberLoanAccount>;
  * (trivially — cumulative principal paid down) purely so Phase 9 has one consistent
  * shape to read regardless of which `interestType` the product used. See
  * `LoanVerificationService`'s schedule-normalization helper and PHASE_8_NOTES.md.
+ *
+ * `dueDate` was NOT part of Phase 8's original shape — flagged there as "not
+ * computed... Phase 9 or later may set actual due dates" since Phase 8 had no
+ * consumer that needed a real calendar date. Phase 9's penalty sweep is that
+ * consumer (see PHASE_9_NOTES.md): each installment is due one calendar month
+ * after the previous one, starting one month after `disbursedAt` — computed
+ * once, at disbursement time, in `LoanVerificationService.normalizeSchedule`.
  */
 @Schema({ _id: false })
 export class RepaymentScheduleEntry {
   @Prop({ type: Number, required: true })
   installmentNumber!: number;
+
+  @Prop({ type: Date, required: true })
+  dueDate!: Date;
 
   @Prop({ type: Number, required: true })
   openingBalance!: number;

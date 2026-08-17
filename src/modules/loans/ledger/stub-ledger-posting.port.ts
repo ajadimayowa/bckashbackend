@@ -40,4 +40,22 @@ export class StubLedgerPostingPort implements LedgerPostingPort {
     );
     return Promise.resolve();
   }
+
+  postRepayment(repaymentId: string, amountKobo: number, _session?: ClientSession): Promise<void> {
+    this.logger.log(
+      `[STUB] postRepayment repaymentId=${repaymentId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+    );
+    return Promise.resolve();
+  }
+
+  postPenalty(
+    penaltyChargeId: string,
+    amountKobo: number,
+    _session?: ClientSession,
+  ): Promise<void> {
+    this.logger.log(
+      `[STUB] postPenalty penaltyChargeId=${penaltyChargeId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+    );
+    return Promise.resolve();
+  }
 }

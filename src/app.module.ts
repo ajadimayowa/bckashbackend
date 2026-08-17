@@ -17,6 +17,7 @@ import { GroupsModule } from './modules/groups/groups.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { LoanProductsModule } from './modules/loan-products/loan-products.module';
 import { LoansModule } from './modules/loans/loans.module';
+import { RepaymentsModule } from './modules/repayments/repayments.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { LoansModule } from './modules/loans/loans.module';
     GroupsModule,
     LoanProductsModule,
     LoansModule,
+    RepaymentsModule,
   ],
   controllers: [HealthController],
 })

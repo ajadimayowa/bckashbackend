@@ -59,6 +59,10 @@ export class PendingNotificationLogPort implements NotificationPort {
     });
   }
 
+  async sendPenaltyCharged(customerId: string, amountKobo: number, context: string): Promise<void> {
+    await this.enqueue(NotificationTrigger.PENALTY_CHARGED, customerId, { amountKobo, context });
+  }
+
   private async enqueue(
     type: NotificationTrigger,
     recipientCustomerId: string,

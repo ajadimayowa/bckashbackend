@@ -50,6 +50,13 @@ const MAKER_ENTITY_TYPES: readonly WorkflowEntityType[] = [
   WorkflowEntityType.GROUP_MEMBERSHIP,
   WorkflowEntityType.LOAN,
   WorkflowEntityType.REPAYMENT_RECORD,
+  // Added in Phase 9 — same maker category as REPAYMENT_RECORD (the same
+  // staff who record repayments initiate an early liquidation). Its chain is
+  // single-step approve-only (see modules/repayments, PHASE_9_NOTES.md), so
+  // MANAGER's resulting reviewCapability(EARLY_LIQUIDATION) grant is never
+  // actually consulted by any chain — same harmless-but-unused precedent as
+  // LOAN_PRODUCT/FEE_DEFINITION's existing single-step chains.
+  WorkflowEntityType.EARLY_LIQUIDATION,
   WorkflowEntityType.LEAVE_APPLICATION,
 ];
 

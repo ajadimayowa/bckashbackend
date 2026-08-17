@@ -9,6 +9,7 @@ import {
   FeeCategory,
   FeePercentageBasis,
   FeeTiming,
+  PenaltyFrequency,
 } from '../../common/enums/loan-product.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { AuditService } from '../../platform/audit/audit.service';
@@ -35,6 +36,9 @@ interface FeeCreationPayload {
   percentageOf: FeePercentageBasis | null;
   appliesTo: FeeAppliesTo;
   productIds: string[];
+  frequency: PenaltyFrequency;
+  recurrenceIntervalDays: number | null;
+  maxRecurrences: number | null;
 }
 
 interface FeeUpdateChanges {
@@ -47,6 +51,9 @@ interface FeeUpdateChanges {
   appliesTo?: FeeAppliesTo;
   productIds?: string[];
   active?: boolean;
+  frequency?: PenaltyFrequency;
+  recurrenceIntervalDays?: number | null;
+  maxRecurrences?: number | null;
 }
 
 interface FeeUpdatePayload {
@@ -104,6 +111,39 @@ export class FeeDefinitionsService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * Added in Phase 9 (see PHASE_9_NOTES.md) — same normalize/validate shape
+   * as resolvePercentageOf: RECURRING requires recurrenceIntervalDays;
+   * ONE_TIME normalizes both recurrence fields to null even if supplied.
+   * Only meaningful today for an EARLY_LIQUIDATION-category fee (see
+   * `modules/repayments`), but validated uniformly for every category so a
+   * malformed RECURRING config can never be saved regardless of category.
+   */
+  private resolveFrequencyFields(
+    frequency: PenaltyFrequency | undefined,
+    recurrenceIntervalDays: number | undefined,
+    maxRecurrences: number | undefined,
+  ): {
+    frequency: PenaltyFrequency;
+    recurrenceIntervalDays: number | null;
+    maxRecurrences: number | null;
+  } {
+    const resolvedFrequency = frequency ?? PenaltyFrequency.ONE_TIME;
+    if (resolvedFrequency === PenaltyFrequency.RECURRING) {
+      if (!recurrenceIntervalDays) {
+        throw new BadRequestException(
+          'recurrenceIntervalDays is required when frequency is RECURRING',
+        );
+      }
+      return {
+        frequency: resolvedFrequency,
+        recurrenceIntervalDays,
+        maxRecurrences: maxRecurrences ?? null,
+      };
+    }
+    return { frequency: resolvedFrequency, recurrenceIntervalDays: null, maxRecurrences: null };
+  }
+
   // ---------------------------------------------------------------------------
   // Creation
   // ---------------------------------------------------------------------------
@@ -113,6 +153,11 @@ export class FeeDefinitionsService implements OnModuleInit {
     initiatedBy: string,
   ): Promise<WorkflowRequestDocument> {
     const percentageOf = this.resolvePercentageOf(dto.calcType, dto.percentageOf);
+    const frequencyFields = this.resolveFrequencyFields(
+      dto.frequency,
+      dto.recurrenceIntervalDays,
+      dto.maxRecurrences,
+    );
 
     const payload: FeeCreationPayload = {
       name: dto.name,
@@ -123,6 +168,7 @@ export class FeeDefinitionsService implements OnModuleInit {
       percentageOf,
       appliesTo: dto.appliesTo,
       productIds: dto.productIds ?? [],
+      ...frequencyFields,
     };
 
     return this.workflowEngineService.initiate({
@@ -147,6 +193,9 @@ export class FeeDefinitionsService implements OnModuleInit {
       productIds: payload.productIds.map((id) => new Types.ObjectId(id)),
       active: true,
       createdBy: new Types.ObjectId(event.initiatedBy),
+      frequency: payload.frequency,
+      recurrenceIntervalDays: payload.recurrenceIntervalDays,
+      maxRecurrences: payload.maxRecurrences,
     });
 
     await this.workflowEngineService.linkEntity(event.workflowRequestId, created._id.toString());
@@ -183,6 +232,23 @@ export class FeeDefinitionsService implements OnModuleInit {
         effectiveCalcType,
         dto.percentageOf ?? existing.percentageOf ?? undefined,
       );
+    }
+
+    // Same isolation principle for the frequency fields — only re-validate
+    // if this update actually touches one of them.
+    if (
+      dto.frequency !== undefined ||
+      dto.recurrenceIntervalDays !== undefined ||
+      dto.maxRecurrences !== undefined
+    ) {
+      const frequencyFields = this.resolveFrequencyFields(
+        dto.frequency ?? existing.frequency,
+        dto.recurrenceIntervalDays ?? existing.recurrenceIntervalDays ?? undefined,
+        dto.maxRecurrences ?? existing.maxRecurrences ?? undefined,
+      );
+      changes.frequency = frequencyFields.frequency;
+      changes.recurrenceIntervalDays = frequencyFields.recurrenceIntervalDays;
+      changes.maxRecurrences = frequencyFields.maxRecurrences;
     }
 
     const payload: FeeUpdatePayload = { feeDefinitionId, changes };

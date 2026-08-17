@@ -11,6 +11,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 
+import { addMonths } from '../../common/date/add-months.util';
 import { InterestType } from '../../common/enums/loan-product.enums';
 import {
   DisbursementChannel,
@@ -397,6 +398,11 @@ export class LoanVerificationService {
     actorId: string | null,
   ): Promise<LoanDocument> {
     const product = await this.loanProductsService.findByIdOrThrow(loan.productId.toString());
+    // Captured once, outside the transaction retry loop, and reused for both
+    // Loan.disbursedAt and every schedule entry's dueDate — so a schedule's
+    // due dates are always anchored to the exact instant disbursement
+    // actually happened, not a slightly-later re-read.
+    const disbursementDate = new Date();
 
     const session = await this.connection.startSession();
     let disbursedLoan: LoanDocument | null = null;
@@ -425,7 +431,11 @@ export class LoanVerificationService {
                   product.interestRate,
                   loan.tenureMonths,
                 );
-          const schedule = this.normalizeSchedule(scheduleResult, account.principalAmountKobo);
+          const schedule = this.normalizeSchedule(
+            scheduleResult,
+            account.principalAmountKobo,
+            disbursementDate,
+          );
           const totalInterestKobo = schedule.reduce((sum, entry) => sum + entry.interestPortion, 0);
 
           await this.memberLoanAccountModel
@@ -453,7 +463,7 @@ export class LoanVerificationService {
         const updated = await this.loanModel
           .findOneAndUpdate(
             { _id: loan._id },
-            { $set: { status: LoanStatus.DISBURSED, disbursedAt: new Date() } },
+            { $set: { status: LoanStatus.DISBURSED, disbursedAt: disbursementDate } },
             { new: true, session },
           )
           .exec();
@@ -521,6 +531,7 @@ export class LoanVerificationService {
   private normalizeSchedule(
     result: FlatScheduleResult | ReducingScheduleResult,
     principalKobo: number,
+    disbursementDate: Date,
   ): RepaymentScheduleEntry[] {
     if ('installmentAmountKobo' in result) {
       let outstanding = principalKobo;
@@ -529,6 +540,7 @@ export class LoanVerificationService {
         outstanding -= entry.principalPortion;
         return {
           installmentNumber: entry.installmentNumber,
+          dueDate: addMonths(disbursementDate, entry.installmentNumber),
           openingBalance,
           principalPortion: entry.principalPortion,
           interestPortion: entry.interestPortion,
@@ -540,6 +552,7 @@ export class LoanVerificationService {
 
     return result.schedule.map((entry) => ({
       installmentNumber: entry.installmentNumber,
+      dueDate: addMonths(disbursementDate, entry.installmentNumber),
       openingBalance: entry.openingBalance,
       principalPortion: entry.principalPortion,
       interestPortion: entry.interestPortion,
