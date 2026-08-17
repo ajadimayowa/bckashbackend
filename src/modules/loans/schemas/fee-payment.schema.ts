@@ -23,6 +23,16 @@ export class FeePayment {
   @Prop({ type: Types.ObjectId, ref: 'Customer', required: true })
   customerId!: Types.ObjectId;
 
+  /**
+   * Added in Phase 10 — needed by `LedgerPostingPort.postFeeCollection`
+   * (every `JournalEntry` requires a `branchId`). Resolved from the
+   * customer's own `branchId` at record time — see PHASE_10_NOTES.md, which
+   * also flags that `recordPayment` never actually posted to the ledger
+   * before this phase (a genuine Phase 8 gap, not just an unused stub).
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Branch', required: true })
+  branchId!: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'LoanProduct', required: true })
   productId!: Types.ObjectId;
 

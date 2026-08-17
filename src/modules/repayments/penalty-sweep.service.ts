@@ -223,6 +223,7 @@ export class PenaltySweepService {
         overdueAmountKobo: installment.totalDue,
         daysLateAtApplication: daysLate,
         penaltyAmountKobo,
+        branchId: loan.branchId.toString(),
       });
       if (!applied) {
         continue; // lost a race against another sweep run — already charged.
@@ -256,9 +257,11 @@ export class PenaltySweepService {
     overdueAmountKobo: number;
     daysLateAtApplication: number;
     penaltyAmountKobo: number;
+    branchId: string;
   }): Promise<boolean> {
     const session = await this.connection.startSession();
     let applied = false;
+    let chargeId: Types.ObjectId | null = null;
     try {
       await session.withTransaction(async () => {
         const exists = await this.penaltyChargeModel
@@ -296,11 +299,7 @@ export class PenaltySweepService {
           )
           .exec();
 
-        await this.ledgerPostingPort.postPenalty(
-          chargeDoc._id.toString(),
-          input.penaltyAmountKobo,
-          session,
-        );
+        chargeId = chargeDoc._id;
         applied = true;
       });
     } catch (error) {
@@ -313,6 +312,30 @@ export class PenaltySweepService {
       throw error;
     } finally {
       await session.endSession();
+    }
+
+    // Ledger posting happens AFTER this transaction commits, deliberately
+    // outside any session — see PHASE_10_NOTES.md. Nesting
+    // LedgerPostingService's own independently-managed session inside this
+    // still-open transaction (both on the same connection) is exactly what
+    // caused a genuine, reproducible deadlock during full-suite testing.
+    // The write was never atomic with this transaction to begin with (the
+    // passed-in session was never actually used for it), so posting after
+    // commit changes nothing about the atomicity guarantee.
+    if (applied && chargeId) {
+      try {
+        await this.ledgerPostingPort.postPenalty({
+          sourceEntityType: 'PENALTY_CHARGE',
+          sourceEntityId: (chargeId as Types.ObjectId).toString(),
+          amountKobo: input.penaltyAmountKobo,
+          branchId: input.branchId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Ledger posting failed for PenaltyCharge ${(chargeId as Types.ObjectId).toString()}: ${message}`,
+        );
+      }
     }
     return applied;
   }
@@ -410,6 +433,7 @@ export class PenaltySweepService {
       liquidationRequestId: liquidationRequest._id,
       periodIndex,
       chargeAmountKobo,
+      branchId: loan.branchId.toString(),
     });
     if (!applied) {
       return;
@@ -428,9 +452,11 @@ export class PenaltySweepService {
     liquidationRequestId: Types.ObjectId;
     periodIndex: number;
     chargeAmountKobo: number;
+    branchId: string;
   }): Promise<boolean> {
     const session = await this.connection.startSession();
     let applied = false;
+    let chargeId: Types.ObjectId | null = null;
     try {
       await session.withTransaction(async () => {
         const exists = await this.liquidationDelayChargeModel
@@ -464,13 +490,7 @@ export class PenaltySweepService {
           )
           .exec();
 
-        // Reuses postPenalty — a delay charge is functionally a penalty. See
-        // LedgerPostingPort's own doc comment.
-        await this.ledgerPostingPort.postPenalty(
-          chargeDoc._id.toString(),
-          input.chargeAmountKobo,
-          session,
-        );
+        chargeId = chargeDoc._id;
         applied = true;
       });
     } catch (error) {
@@ -480,6 +500,26 @@ export class PenaltySweepService {
       throw error;
     } finally {
       await session.endSession();
+    }
+
+    // Ledger posting after commit, outside any session — same reasoning as
+    // applyPenaltyCharge above; see PHASE_10_NOTES.md. Reuses postPenalty —
+    // a delay charge is functionally a penalty. See LedgerPostingPort's own
+    // doc comment.
+    if (applied && chargeId) {
+      try {
+        await this.ledgerPostingPort.postPenalty({
+          sourceEntityType: 'LIQUIDATION_DELAY_CHARGE',
+          sourceEntityId: (chargeId as Types.ObjectId).toString(),
+          amountKobo: input.chargeAmountKobo,
+          branchId: input.branchId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Ledger posting failed for LiquidationDelayCharge ${(chargeId as Types.ObjectId).toString()}: ${message}`,
+        );
+      }
     }
     return applied;
   }

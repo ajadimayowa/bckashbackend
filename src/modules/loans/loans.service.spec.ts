@@ -663,6 +663,7 @@ describe('LoansService & LoanVerificationService', () => {
       // Once recorded as PAID, that member drops out of the outstanding list.
       await feePaymentModel.create({
         customerId: new Types.ObjectId(customerIds[0]!),
+        branchId: new Types.ObjectId(branchId),
         productId: product._id,
         feeDefinitionId: new Types.ObjectId(feeId),
         amountKobo: 2_000,

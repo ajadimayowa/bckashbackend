@@ -1,61 +1,96 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ClientSession } from 'mongoose';
 
-import { LedgerPostingPort } from '../interfaces/ledger-posting-port.interface';
+import {
+  LedgerPostingPort,
+  PostDisbursementParams,
+  PostedJournalEntry,
+  PostFeeCollectionParams,
+  PostPenaltyParams,
+  PostRepaymentParams,
+} from '../interfaces/ledger-posting-port.interface';
 
 /**
- * *** TEMPORARY — SEE PHASE_8_NOTES.md — MUST BE REPLACED IN PHASE 10 ***
- * Logs the call and does nothing else — no journal entry is actually posted.
- * Per the brief: "LedgerPostingPort's stub should simply log the call (no-op
- * otherwise) — Phase 10 (Accounting) will rebind it to actually post balanced
- * journal entries." Unlike NotificationPort's stub, this one deliberately does
- * NOT persist anything durable to replay later — Phase 10 is expected to
- * re-derive every historical disbursement/fee-collection directly from
- * Loan/MemberLoanAccount/FeePayment records (the source of truth already
- * exists there), not from a ledger-specific backlog table.
+ * *** RETAINED FOR TESTS ONLY — SEE PHASE_10_NOTES.md ***
+ * `LEDGER_POSTING_PORT` is now bound to `AccountingModule`'s real
+ * `LedgerPostingService` in production (`loans.module.ts`); this stub
+ * remains only as a lightweight double for tests that don't need real
+ * postings. Never persists anything — fabricates a `PostedJournalEntry`-
+ * shaped return value so callers that inspect the result don't need a
+ * special case for "the stub is bound."
  */
 @Injectable()
 export class StubLedgerPostingPort implements LedgerPostingPort {
   private readonly logger = new Logger(StubLedgerPostingPort.name);
 
   postDisbursement(
-    loanId: string,
-    memberLoanAccountId: string,
-    amountKobo: number,
+    params: PostDisbursementParams,
     _session?: ClientSession,
-  ): Promise<void> {
+  ): Promise<PostedJournalEntry> {
     this.logger.log(
-      `[STUB] postDisbursement loanId=${loanId} memberLoanAccountId=${memberLoanAccountId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+      `[STUB] postDisbursement loanId=${params.loanId} memberLoanAccountId=${params.memberLoanAccountId} amountKobo=${params.amountKobo} — no journal entry posted`,
     );
-    return Promise.resolve();
+    return Promise.resolve(
+      this.fabricate('LOAN_DISBURSEMENT', params.loanId, params.branchId, params.amountKobo),
+    );
   }
 
   postFeeCollection(
-    feePaymentId: string,
-    amountKobo: number,
+    params: PostFeeCollectionParams,
     _session?: ClientSession,
-  ): Promise<void> {
+  ): Promise<PostedJournalEntry> {
     this.logger.log(
-      `[STUB] postFeeCollection feePaymentId=${feePaymentId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+      `[STUB] postFeeCollection feePaymentId=${params.feePaymentId} amountKobo=${params.amountKobo} — no journal entry posted`,
     );
-    return Promise.resolve();
+    return Promise.resolve(
+      this.fabricate('FEE_COLLECTION', params.feePaymentId, params.branchId, params.amountKobo),
+    );
   }
 
-  postRepayment(repaymentId: string, amountKobo: number, _session?: ClientSession): Promise<void> {
+  postRepayment(
+    params: PostRepaymentParams,
+    _session?: ClientSession,
+  ): Promise<PostedJournalEntry> {
     this.logger.log(
-      `[STUB] postRepayment repaymentId=${repaymentId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+      `[STUB] postRepayment repaymentRecordId=${params.repaymentRecordId} amountKobo=${params.amountKobo} — no journal entry posted`,
     );
-    return Promise.resolve();
+    return Promise.resolve(
+      this.fabricate('REPAYMENT', params.repaymentRecordId, params.branchId, params.amountKobo),
+    );
   }
 
-  postPenalty(
-    penaltyChargeId: string,
-    amountKobo: number,
-    _session?: ClientSession,
-  ): Promise<void> {
+  postPenalty(params: PostPenaltyParams, _session?: ClientSession): Promise<PostedJournalEntry> {
     this.logger.log(
-      `[STUB] postPenalty penaltyChargeId=${penaltyChargeId} amountKobo=${amountKobo} — no journal entry posted (Phase 10 must rebind LEDGER_POSTING_PORT)`,
+      `[STUB] postPenalty sourceEntityType=${params.sourceEntityType} sourceEntityId=${params.sourceEntityId} amountKobo=${params.amountKobo} — no journal entry posted`,
     );
-    return Promise.resolve();
+    return Promise.resolve(
+      this.fabricate(
+        'PENALTY',
+        params.sourceEntityId,
+        params.branchId,
+        params.amountKobo,
+        params.sourceEntityType,
+      ),
+    );
+  }
+
+  private fabricate(
+    sourceEntityType: string,
+    sourceEntityId: string,
+    branchId: string,
+    amountKobo: number,
+    sourceRefPrefix?: string,
+  ): PostedJournalEntry {
+    const now = new Date();
+    return {
+      id: `stub-${sourceEntityType}-${sourceEntityId}`,
+      sourceEntityType,
+      sourceEntityId,
+      sourceRef: `${sourceRefPrefix ?? sourceEntityType}:${sourceEntityId}`,
+      branchId,
+      date: now,
+      lines: [{ accountId: 'stub', debitKobo: amountKobo, creditKobo: amountKobo }],
+      postedAt: now,
+    };
   }
 }

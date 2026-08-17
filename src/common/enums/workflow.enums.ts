@@ -38,4 +38,7 @@ export enum WorkflowEntityType {
   // two-step chain. See modules/repayments, PHASE_9_NOTES.md.
   EARLY_LIQUIDATION = 'EARLY_LIQUIDATION',
   LEAVE_APPLICATION = 'LEAVE_APPLICATION',
+  // Added in Phase 10 — a single-step chain for free-form manual journal
+  // entries. See modules/accounting, PHASE_10_NOTES.md.
+  MANUAL_JOURNAL_ENTRY = 'MANUAL_JOURNAL_ENTRY',
 }

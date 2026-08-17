@@ -135,11 +135,14 @@ describe('RepaymentsService', () => {
       const accountAfter = await ctx.memberLoanAccountModel.findById(accountId).exec();
       expect(accountAfter!.outstandingBalanceKobo).toBe(balanceBefore - 50_000);
       expect(postRepaymentSpy).toHaveBeenCalledTimes(1);
-      expect(postRepaymentSpy).toHaveBeenCalledWith(
-        record._id.toString(),
-        50_000,
-        expect.anything(),
-      );
+      // No session arg — Phase 10 moved this call to after the enclosing
+      // transaction commits (see PHASE_10_NOTES.md, the nested-transaction
+      // deadlock fix).
+      expect(postRepaymentSpy).toHaveBeenCalledWith({
+        repaymentRecordId: record._id.toString(),
+        amountKobo: 50_000,
+        branchId: ctx.branchId,
+      });
     });
 
     it('caps the decrement at the outstanding balance and records overpaymentAmountKobo', async () => {

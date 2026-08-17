@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
@@ -12,6 +12,11 @@ import { FeePaymentStatus } from '../../common/enums/loan.enums';
 import { AuditService } from '../../platform/audit/audit.service';
 import { calculateFeeAmount } from '../loan-products/calculations';
 import { FeeDefinitionDocument } from '../loan-products/schemas/fee-definition.schema';
+// Cross-module raw schema registration only — same pattern as elsewhere in
+// this codebase (see e.g. RepaymentsService's own comment). Needed only to
+// resolve a customer's branchId for the ledger posting below.
+import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
+import { LEDGER_POSTING_PORT, LedgerPostingPort } from './interfaces/ledger-posting-port.interface';
 import { FeePayment, FeePaymentDocument } from './schemas/fee-payment.schema';
 
 export interface OutstandingPreLoanFee {
@@ -40,9 +45,17 @@ export interface OutstandingPreLoanFee {
 export class FeePaymentsService {
   constructor(
     @InjectModel(FeePayment.name) private readonly feePaymentModel: Model<FeePaymentDocument>,
+    @InjectModel(Customer.name) private readonly customerModel: Model<CustomerDocument>,
     private readonly auditService: AuditService,
+    @Inject(LEDGER_POSTING_PORT) private readonly ledgerPostingPort: LedgerPostingPort,
   ) {}
 
+  /**
+   * Posts to the ledger (`LedgerPostingPort.postFeeCollection`) only for
+   * PAID — a WAIVED fee never moved any money, so there's nothing to
+   * post. Added in Phase 10 — see PHASE_10_NOTES.md: this call site never
+   * existed before, a genuine Phase 8 gap rather than a stub sitting unused.
+   */
   async recordPayment(
     customerId: string,
     productId: string,
@@ -51,6 +64,11 @@ export class FeePaymentsService {
     status: FeePaymentStatus.PAID | FeePaymentStatus.WAIVED,
     recordedBy: string,
   ): Promise<FeePaymentDocument> {
+    const customer = await this.customerModel.findById(customerId).exec();
+    if (!customer) {
+      throw new NotFoundException(`Customer ${customerId} not found`);
+    }
+
     const now = new Date();
     const updated = await this.feePaymentModel
       .findOneAndUpdate(
@@ -61,6 +79,7 @@ export class FeePaymentsService {
         },
         {
           $set: {
+            branchId: customer.branchId,
             amountKobo,
             status,
             recordedBy: new Types.ObjectId(recordedBy),
@@ -70,6 +89,14 @@ export class FeePaymentsService {
         { new: true, upsert: true },
       )
       .exec();
+
+    if (status === FeePaymentStatus.PAID) {
+      await this.ledgerPostingPort.postFeeCollection({
+        feePaymentId: updated._id.toString(),
+        amountKobo,
+        branchId: customer.branchId.toString(),
+      });
+    }
 
     await this.auditService.record({
       actorId: recordedBy,

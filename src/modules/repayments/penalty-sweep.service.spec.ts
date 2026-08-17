@@ -120,11 +120,15 @@ describe('PenaltySweepService', () => {
       expect(charges[0]!.penaltyAmountKobo).toBe(expectedAmount);
 
       expect(postPenaltySpy).toHaveBeenCalledTimes(1);
-      expect(postPenaltySpy).toHaveBeenCalledWith(
-        charges[0]!._id.toString(),
-        expectedAmount,
-        expect.anything(),
-      );
+      // No session arg — Phase 10 moved this call to after the enclosing
+      // transaction commits (see PHASE_10_NOTES.md, the nested-transaction
+      // deadlock fix).
+      expect(postPenaltySpy).toHaveBeenCalledWith({
+        sourceEntityType: 'PENALTY_CHARGE',
+        sourceEntityId: charges[0]!._id.toString(),
+        amountKobo: expectedAmount,
+        branchId: ctx.branchId,
+      });
 
       const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
       expect(account!.outstandingBalanceKobo).toBe(
@@ -315,11 +319,15 @@ describe('PenaltySweepService', () => {
       const accountAfter = await ctx.memberLoanAccountModel.findById(accountId).exec();
       expect(accountAfter!.outstandingBalanceKobo).toBe(balanceBefore);
 
-      expect(postPenaltySpy).toHaveBeenCalledWith(
-        charges[0]!._id.toString(),
-        2_000,
-        expect.anything(),
-      );
+      // No session arg — Phase 10 moved this call to after the enclosing
+      // transaction commits (see PHASE_10_NOTES.md, the nested-transaction
+      // deadlock fix).
+      expect(postPenaltySpy).toHaveBeenCalledWith({
+        sourceEntityType: 'LIQUIDATION_DELAY_CHARGE',
+        sourceEntityId: charges[0]!._id.toString(),
+        amountKobo: 2_000,
+        branchId: ctx.branchId,
+      });
     });
 
     it('produces zero delay charges for a ONE_TIME fee configuration, regardless of how long settlement is delayed', async () => {

@@ -451,13 +451,6 @@ export class LoanVerificationService {
               { session },
             )
             .exec();
-
-          await this.ledgerPostingPort.postDisbursement(
-            loan._id.toString(),
-            account._id.toString(),
-            account.principalAmountKobo,
-            session,
-          );
         }
 
         const updated = await this.loanModel
@@ -487,6 +480,44 @@ export class LoanVerificationService {
       entityId: finalLoan._id.toString(),
       after: { status: LoanStatus.DISBURSED, cumulativeAmountKobo: loan.cumulativeAmountKobo },
     });
+
+    // Ledger posting — moved here (Phase 10) from inside the transaction
+    // above. LedgerPostingService manages its own independent session per
+    // posting (see LedgerPostingPort's doc comment), so nesting its call
+    // inside this method's own still-open `session.withTransaction(...)` was
+    // never actually atomic with the domain write — it only risked a real
+    // deadlock (two open transactions on the same connection, one awaiting
+    // the other), which is exactly what surfaced as a hung test suite. Moving
+    // the call to after commit removes the deadlock without giving up
+    // anything that was ever really guaranteed. A ledger-posting failure here
+    // does NOT roll back the (already-committed) disbursement — it's caught,
+    // logged, and recorded as its own audit entry so a missing journal entry
+    // is a visible, reconcilable ops event rather than a silently swallowed
+    // one (elevated above the plain warn-log used for notification/transfer
+    // failures below, given the financial-integrity stakes). See
+    // PHASE_10_NOTES.md.
+    for (const account of accounts) {
+      try {
+        await this.ledgerPostingPort.postDisbursement({
+          loanId: loan._id.toString(),
+          memberLoanAccountId: account._id.toString(),
+          amountKobo: account.principalAmountKobo,
+          branchId: loan.branchId.toString(),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Ledger posting failed for disbursement of memberLoanAccount ${account._id.toString()}: ${message}`,
+        );
+        await this.auditService.record({
+          actorId,
+          action: 'LEDGER_POST_DISBURSEMENT_FAILED',
+          entityType: 'MEMBER_LOAN_ACCOUNT',
+          entityId: account._id.toString(),
+          after: { amountKobo: account.principalAmountKobo, error: message },
+        });
+      }
+    }
 
     // Outside the transaction, after commit — never let a post-disbursement
     // step's failure roll back a successful disbursement. Each member is

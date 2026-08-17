@@ -1,6 +1,7 @@
 import { StaffRole } from '../../../common/enums/identity.enums';
 import { WorkflowEntityType } from '../../../common/enums/workflow.enums';
 import {
+  ACCOUNTING_MANAGE_CAPABILITY,
   ALL_WORKFLOW_ENTITY_TYPES,
   BRANCH_FUND_CAPABILITY,
   BRANCH_MANAGE_ACCOUNTS_CAPABILITY,
@@ -109,6 +110,7 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       BRANCH_FUND_CAPABILITY,
       GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
       LOAN_DISBURSEMENT_OPS_CAPABILITY,
+      ACCOUNTING_MANAGE_CAPABILITY,
     ],
   },
   {
@@ -125,6 +127,7 @@ export const DEFAULT_ROLE_CAPABILITIES: readonly RoleCapabilitiesSeed[] = [
       BRANCH_FUND_CAPABILITY,
       GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
       LOAN_DISBURSEMENT_OPS_CAPABILITY,
+      ACCOUNTING_MANAGE_CAPABILITY,
     ],
   },
   {

@@ -11,6 +11,7 @@ import { AuditModule } from './platform/audit/audit.module';
 import { EncryptionModule } from './platform/encryption/encryption.module';
 import { RbacModule } from './platform/rbac/rbac.module';
 import { WorkflowEngineModule } from './platform/workflow-engine/workflow-engine.module';
+import { AccountingModule } from './modules/accounting/accounting.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { GroupsModule } from './modules/groups/groups.module';
@@ -63,6 +64,7 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
     CustomersModule,
     GroupsModule,
     LoanProductsModule,
+    AccountingModule,
     LoansModule,
     RepaymentsModule,
   ],

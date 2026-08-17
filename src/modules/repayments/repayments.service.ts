@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -69,6 +70,8 @@ export interface RecordRepaymentResult {
 
 @Injectable()
 export class RepaymentsService implements OnModuleInit {
+  private readonly logger = new Logger(RepaymentsService.name);
+
   constructor(
     @InjectModel(RepaymentRecord.name)
     private readonly repaymentRecordModel: Model<RepaymentRecordDocument>,
@@ -265,6 +268,7 @@ export class RepaymentsService implements OnModuleInit {
   async applyToBalance(repaymentId: string, actorId: string | null): Promise<void> {
     const session = await this.connection.startSession();
     let applied = false;
+    let postingParams: { cappedAmount: number; branchId: string } | null = null;
     try {
       await session.withTransaction(async () => {
         const guarded = await this.repaymentRecordModel
@@ -331,7 +335,16 @@ export class RepaymentsService implements OnModuleInit {
             .exec();
         }
 
-        await this.ledgerPostingPort.postRepayment(repaymentId, cappedAmount, session);
+        // Ledger posting deliberately happens AFTER this transaction commits
+        // (see below, outside `withTransaction`) — not here. See
+        // PHASE_10_NOTES.md: nesting LedgerPostingService's own
+        // independently-managed session inside this still-open transaction
+        // (both on the same connection) caused a genuine, reproducible
+        // deadlock. It was never actually atomic with this transaction
+        // anyway (LedgerPostingService never used the passed-in session for
+        // its write), so deferring it to post-commit changes nothing about
+        // the atomicity guarantee — it only removes the unsafe nesting.
+        postingParams = { cappedAmount, branchId: guarded.branchId.toString() };
         applied = true;
 
         if (overpaymentAmountKobo !== null) {
@@ -353,7 +366,26 @@ export class RepaymentsService implements OnModuleInit {
       await session.endSession();
     }
 
-    if (applied) {
+    if (applied && postingParams) {
+      const { cappedAmount: postedAmountKobo, branchId: postedBranchId } = postingParams;
+      try {
+        await this.ledgerPostingPort.postRepayment({
+          repaymentRecordId: repaymentId,
+          amountKobo: postedAmountKobo,
+          branchId: postedBranchId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Ledger posting failed for repayment ${repaymentId}: ${message}`);
+        await this.auditService.record({
+          actorId,
+          action: 'LEDGER_POST_REPAYMENT_FAILED',
+          entityType: 'REPAYMENT_RECORD',
+          entityId: repaymentId,
+          after: { amountKobo: postedAmountKobo, error: message },
+        });
+      }
+
       await this.eventEmitter.emitAsync(REPAYMENT_APPLIED_EVENT, {
         repaymentRecordId: repaymentId,
       } satisfies RepaymentAppliedEvent);

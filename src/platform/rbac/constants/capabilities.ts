@@ -58,6 +58,16 @@ export const GROUP_REASSIGN_LEADERSHIP_CAPABILITY = 'group:reassign_leadership';
  * uses `approveCapability(LOAN)` instead — see that method's own doc comment.
  */
 export const LOAN_DISBURSEMENT_OPS_CAPABILITY = 'loan:disbursement_ops';
+/**
+ * Gates chart-of-accounts CRUD and account-mapping updates (Phase 10) —
+ * deliberately not workflow-mediated, same "structural configuration, not a
+ * money movement" reasoning as `ORG_MANAGE_CAPABILITY`/
+ * `BRANCH_MANAGE_ACCOUNTS_CAPABILITY`. See PHASE_10_NOTES.md for the flagged
+ * assumption this default rests on. Reading the ledger, and *proposing* a
+ * manual journal entry, need only `ModuleName.ACCOUNTING` module access
+ * (`@RequireModule`), not this capability — see AccountingController.
+ */
+export const ACCOUNTING_MANAGE_CAPABILITY = 'accounting:manage_accounts';
 
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
@@ -89,4 +99,5 @@ export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
   BRANCH_VERIFY_FUNDING_CAPABILITY,
   GROUP_REASSIGN_LEADERSHIP_CAPABILITY,
   LOAN_DISBURSEMENT_OPS_CAPABILITY,
+  ACCOUNTING_MANAGE_CAPABILITY,
 ];
