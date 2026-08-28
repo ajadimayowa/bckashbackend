@@ -32,6 +32,6 @@ import { BvnCallLog, BvnCallLogSchema } from './schemas/bvn-call-log.schema';
       },
     },
   ],
-  exports: [BVN_VERIFICATION_ADAPTER, BvnCallLogService],
+  exports: [BVN_VERIFICATION_ADAPTER, BvnCallLogService, BvnProviderAuthService],
 })
 export class BvnIntegrationModule {}

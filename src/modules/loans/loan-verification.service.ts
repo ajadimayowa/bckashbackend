@@ -11,7 +11,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 
-import { addMonths } from '../../common/date/add-months.util';
+import { addDays } from '../../common/date/add-days.util';
 import { InterestType } from '../../common/enums/loan-product.enums';
 import {
   DisbursementChannel,
@@ -418,23 +418,37 @@ export class LoanVerificationService {
           session,
         );
 
+        // One installment per `product.repaymentPeriodDays`-day cycle (7 =
+        // weekly, the default — see LoanProduct.repaymentPeriodDays's own doc
+        // comment), not one per calendar day of tenure. `ceil` so a tenure
+        // that doesn't divide evenly still gets a final, shorter installment
+        // covering the remainder rather than silently dropping days off the
+        // end of the loan — see normalizeSchedule's clamp of the last due date
+        // to exactly `tenureDays` after the anchor.
+        const installmentCount = Math.max(
+          1,
+          Math.ceil(loan.tenureDays / product.repaymentPeriodDays),
+        );
+
         for (const account of accounts) {
           const scheduleResult =
             product.interestType === InterestType.FLAT
               ? calculateFlatInterestSchedule(
                   account.principalAmountKobo,
                   product.interestRate,
-                  loan.tenureMonths,
+                  installmentCount,
                 )
               : calculateReducingBalanceSchedule(
                   account.principalAmountKobo,
                   product.interestRate,
-                  loan.tenureMonths,
+                  installmentCount,
                 );
           const schedule = this.normalizeSchedule(
             scheduleResult,
             account.principalAmountKobo,
             disbursementDate,
+            product.repaymentPeriodDays,
+            loan.tenureDays,
           );
           const totalInterestKobo = schedule.reduce((sum, entry) => sum + entry.interestPortion, 0);
 
@@ -552,18 +566,48 @@ export class LoanVerificationService {
   }
 
   /**
+   * Every installment is `installmentNumber * repaymentPeriodDays` days after
+   * `anchorDate` (7 days apart for the default weekly cadence) — EXCEPT the
+   * last, which is always exactly `tenureDays` after the anchor, so the final
+   * repayment date lines up with "the loan tenure is completed" rather than
+   * (for a tenure that isn't an exact multiple of the repayment period)
+   * overshooting it by a few extra days. `anchorDate` is the disbursement
+   * date for a TRANSFER account, or the (initially provisional) disbursement
+   * date for a CHEQUE_PICKUP one — see `confirmChequeHandover`, which
+   * re-anchors a CHEQUE_PICKUP account's due dates to the real handover date
+   * using this exact same formula once it's known.
+   */
+  private computeInstallmentDueDate(
+    anchorDate: Date,
+    installmentNumber: number,
+    installmentCount: number,
+    repaymentPeriodDays: number,
+    tenureDays: number,
+  ): Date {
+    const isLast = installmentNumber === installmentCount;
+    return addDays(anchorDate, isLast ? tenureDays : installmentNumber * repaymentPeriodDays);
+  }
+
+  /**
    * Unifies Phase 7's two calculation functions' slightly different return
    * shapes into one persisted `RepaymentScheduleEntry[]` — see that class's
    * own doc comment. FLAT schedules don't natively carry opening/closing
    * balance, so they're derived here by tracking cumulative principal paid
    * down; this never re-derives principal/interest amounts themselves, only
    * adds the balance bookkeeping around Phase 7's already-correct numbers.
+   *
+   * `dueDate` — see computeInstallmentDueDate's own doc comment for the
+   * weekly-cadence-with-clamped-final-installment shape.
    */
   private normalizeSchedule(
     result: FlatScheduleResult | ReducingScheduleResult,
     principalKobo: number,
-    disbursementDate: Date,
+    anchorDate: Date,
+    repaymentPeriodDays: number,
+    tenureDays: number,
   ): RepaymentScheduleEntry[] {
+    const installmentCount = result.schedule.length;
+
     if ('installmentAmountKobo' in result) {
       let outstanding = principalKobo;
       return result.schedule.map((entry) => {
@@ -571,7 +615,13 @@ export class LoanVerificationService {
         outstanding -= entry.principalPortion;
         return {
           installmentNumber: entry.installmentNumber,
-          dueDate: addMonths(disbursementDate, entry.installmentNumber),
+          dueDate: this.computeInstallmentDueDate(
+            anchorDate,
+            entry.installmentNumber,
+            installmentCount,
+            repaymentPeriodDays,
+            tenureDays,
+          ),
           openingBalance,
           principalPortion: entry.principalPortion,
           interestPortion: entry.interestPortion,
@@ -583,13 +633,28 @@ export class LoanVerificationService {
 
     return result.schedule.map((entry) => ({
       installmentNumber: entry.installmentNumber,
-      dueDate: addMonths(disbursementDate, entry.installmentNumber),
+      dueDate: this.computeInstallmentDueDate(
+        anchorDate,
+        entry.installmentNumber,
+        installmentCount,
+        repaymentPeriodDays,
+        tenureDays,
+      ),
       openingBalance: entry.openingBalance,
       principalPortion: entry.principalPortion,
       interestPortion: entry.interestPortion,
       totalDue: entry.totalDue,
       closingBalance: entry.closingBalance,
     }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reads
+  // ---------------------------------------------------------------------------
+
+  /** Every DisbursementVerification recorded for a loan, one per member at most — used by the Loan Manager detail view. */
+  async getVerificationsForLoan(loanId: string): Promise<DisbursementVerificationDocument[]> {
+    return this.disbursementVerificationModel.find({ loanId: new Types.ObjectId(loanId) }).exec();
   }
 
   // ---------------------------------------------------------------------------
@@ -622,7 +687,40 @@ export class LoanVerificationService {
       );
     }
 
-    account.chequeHandedOverAt = new Date();
+    const chequeHandedOverAt = new Date();
+    account.chequeHandedOverAt = chequeHandedOverAt;
+
+    // Re-anchor every schedule entry's dueDate to the REAL handover date —
+    // see computeInstallmentDueDate's own doc comment. The schedule was
+    // necessarily generated at disbursement time (before any customer could
+    // physically go collect a cheque), using the disbursement date as a
+    // provisional anchor; the first repayment date is only fair to start
+    // counting from once the customer actually has the cheque in hand — they
+    // still need time to go cash/process it at the bank. This is a distinct
+    // concern from PenaltySweepService's CHEQUE_PICKUP_PENALTY_GRACE_BUFFER_DAYS
+    // (that buffers how much further-late a payment must be before a penalty
+    // applies; this decides when the payment is due in the first place).
+    if (account.schedule.length > 0) {
+      const loan = await this.loanModel.findById(account.loanId).exec();
+      if (!loan) {
+        throw new NotFoundException(
+          `Loan ${account.loanId.toString()} not found for MemberLoanAccount ${memberLoanAccountId}`,
+        );
+      }
+      const product = await this.loanProductsService.findByIdOrThrow(loan.productId.toString());
+      const installmentCount = account.schedule.length;
+      for (const entry of account.schedule) {
+        entry.dueDate = this.computeInstallmentDueDate(
+          chequeHandedOverAt,
+          entry.installmentNumber,
+          installmentCount,
+          product.repaymentPeriodDays,
+          loan.tenureDays,
+        );
+      }
+      account.markModified('schedule');
+    }
+
     await account.save();
 
     await this.auditService.record({
@@ -630,7 +728,10 @@ export class LoanVerificationService {
       action: 'CHEQUE_HANDED_OVER',
       entityType: 'MEMBER_LOAN_ACCOUNT',
       entityId: memberLoanAccountId,
-      after: { chequeHandedOverAt: account.chequeHandedOverAt },
+      after: {
+        chequeHandedOverAt,
+        scheduleReanchored: account.schedule.length > 0,
+      },
     });
 
     return account;

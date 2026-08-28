@@ -20,6 +20,12 @@ export class Branch {
   @Prop({ type: String, default: null })
   address!: string | null;
 
+  @Prop({ type: String, default: null, trim: true })
+  phone!: string | null;
+
+  @Prop({ type: String, default: null, trim: true, lowercase: true })
+  email!: string | null;
+
   @Prop({ type: Boolean, required: true, default: true })
   active!: boolean;
 }

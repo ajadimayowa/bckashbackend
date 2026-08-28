@@ -25,7 +25,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed": "ts-node -r tsconfig-paths/register src/database/seeders/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.1111.0",

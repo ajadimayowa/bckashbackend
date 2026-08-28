@@ -12,8 +12,9 @@ export enum RepaymentStatus {
 
 /** Added in Phase 9 — see modules/repayments/schemas/repayment-record.schema.ts. */
 export enum RepaymentChannel {
+  CASH = 'CASH',
   BANK_TRANSFER = 'BANK_TRANSFER',
-  POS = 'POS',
+  BANK_DEPOSIT = 'BANK_DEPOSIT',
 }
 
 /**

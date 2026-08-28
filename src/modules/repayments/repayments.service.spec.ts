@@ -1,4 +1,4 @@
-import { MemberLoanAccountStatus } from '../../common/enums/loan.enums';
+import { LoanStatus, MemberLoanAccountStatus } from '../../common/enums/loan.enums';
 import { RepaymentStatus } from '../../common/enums/repayment.enums';
 import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { WorkflowApprovedEvent } from '../../platform/workflow-engine/events/workflow-engine.events';
@@ -124,6 +124,7 @@ describe('RepaymentsService', () => {
         branchId: ctx.branchId,
         payload: { repaymentId: record._id.toString() },
         initiatedBy: ctx.INITIATOR_ID,
+        approvedBy: ctx.INITIATOR_ID,
       };
 
       // Simulate the real workflow.approved firing (via act()) AND a
@@ -145,7 +146,45 @@ describe('RepaymentsService', () => {
       });
     });
 
-    it('caps the decrement at the outstanding balance and records overpaymentAmountKobo', async () => {
+    it('rejects recordRepayment outright when the amount exceeds the account\'s current outstanding balance', async () => {
+      const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx, {
+        memberPrincipalKobo: 30_000,
+      });
+      const accountId = memberLoanAccountIds[0]!;
+      const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
+      const outstanding = account!.outstandingBalanceKobo!;
+
+      await expect(
+        ctx.repaymentsService.recordRepayment(
+          {
+            memberLoanAccountId: accountId,
+            branchBankAccountId: ctx.branchBankAccountId,
+            channel: 'BANK_TRANSFER' as never,
+            transactionReference: `TXN-${Date.now()}`,
+            amountKobo: outstanding + 5_000,
+            paymentDate: new Date().toISOString(),
+          },
+          ctx.INITIATOR_ID,
+        ),
+      ).rejects.toThrow(/cannot be greater than outstanding balance|can't be greater than outstanding balance/i);
+
+      // Never even reached RepaymentRecord creation — no balance effect,
+      // nothing pending review.
+      const accountAfter = await ctx.memberLoanAccountModel.findById(accountId).exec();
+      expect(accountAfter!.outstandingBalanceKobo).toBe(outstanding);
+    });
+
+    /**
+     * `recordRepayment`'s own up-front rejection (see the test above) only
+     * ever compares against the balance AT RECORD TIME — it can't see a
+     * second repayment recorded moments later against the same still-ACTIVE
+     * account. `applyToBalance`'s Math.min cap is what actually closes that
+     * race: both repayments individually pass the record-time check, but
+     * approving the first already exhausts the balance before the second is
+     * approved, so the second gets capped to 0 and its excess flagged as
+     * overpaymentAmountKobo rather than pushing the balance negative.
+     */
+    it('caps the decrement at 0 and records overpaymentAmountKobo when two pending repayments together exceed the balance', async () => {
       const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx, {
         memberPrincipalKobo: 30_000,
       });
@@ -154,11 +193,51 @@ describe('RepaymentsService', () => {
       const outstanding = account!.outstandingBalanceKobo!;
       const overpayBy = 5_000;
 
-      const approved = await recordAndApproveRepayment(ctx, accountId, outstanding + overpayBy);
+      // Both recorded while the account is still ACTIVE — neither one alone
+      // exceeds `outstanding` at record time.
+      const { record: recordA, workflowRequest: workflowA } = await ctx.repaymentsService.recordRepayment(
+        {
+          memberLoanAccountId: accountId,
+          branchBankAccountId: ctx.branchBankAccountId,
+          channel: 'BANK_TRANSFER' as never,
+          transactionReference: `TXN-A-${Date.now()}`,
+          amountKobo: outstanding,
+          paymentDate: new Date().toISOString(),
+        },
+        ctx.INITIATOR_ID,
+      );
+      const { record: recordB, workflowRequest: workflowB } = await ctx.repaymentsService.recordRepayment(
+        {
+          memberLoanAccountId: accountId,
+          branchBankAccountId: ctx.branchBankAccountId,
+          channel: 'BANK_TRANSFER' as never,
+          transactionReference: `TXN-B-${Date.now()}`,
+          amountKobo: overpayBy,
+          paymentDate: new Date().toISOString(),
+        },
+        ctx.INITIATOR_ID,
+      );
 
-      expect(approved.overpaymentAmountKobo).toBe(overpayBy);
+      for (const workflowRequest of [workflowA, workflowB]) {
+        await ctx.workflowEngineService.act({
+          workflowRequestId: workflowRequest._id.toString(),
+          actor: repaymentReviewActor(ctx),
+          action: WorkflowStepAction.APPROVED,
+        });
+        await ctx.workflowEngineService.act({
+          workflowRequestId: workflowRequest._id.toString(),
+          actor: repaymentApproveActor(ctx),
+          action: WorkflowStepAction.APPROVED,
+        });
+      }
+
+      const approvedB = await ctx.repaymentRecordModel.findById(recordB._id).exec();
+      expect(approvedB!.overpaymentAmountKobo).toBe(overpayBy);
       const accountAfter = await ctx.memberLoanAccountModel.findById(accountId).exec();
       expect(accountAfter!.outstandingBalanceKobo).toBe(0);
+      // Sanity: A itself had no overpayment — it exactly exhausted the balance.
+      const approvedA = await ctx.repaymentRecordModel.findById(recordA._id).exec();
+      expect(approvedA!.overpaymentAmountKobo).toBeNull();
     });
 
     it('closes the MemberLoanAccount once the balance reaches exactly 0', async () => {
@@ -172,6 +251,56 @@ describe('RepaymentsService', () => {
       const accountAfter = await ctx.memberLoanAccountModel.findById(accountId).exec();
       expect(accountAfter!.outstandingBalanceKobo).toBe(0);
       expect(accountAfter!.status).toBe(MemberLoanAccountStatus.CLOSED);
+    });
+
+    it('closes the parent Loan (LoanStatus.CLOSED) once every one of its MemberLoanAccounts is CLOSED', async () => {
+      // A group needs at least 3 proposed members (GroupsService's own
+      // rule) — so "every account settled" here means paying off all 3.
+      const { memberLoanAccountIds, loanId } = await raiseApproveVerifyAndDisburseLoan(ctx, { n: 3 });
+
+      for (const accountId of memberLoanAccountIds) {
+        const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
+        await recordAndApproveRepayment(ctx, accountId, account!.outstandingBalanceKobo!);
+      }
+
+      const loanAfter = await ctx.loanModel.findById(loanId).exec();
+      expect(loanAfter!.status).toBe(LoanStatus.CLOSED);
+    });
+
+    it('leaves a multi-member Loan DISBURSED (not CLOSED) while at least one of its MemberLoanAccounts is still open', async () => {
+      const { memberLoanAccountIds, loanId } = await raiseApproveVerifyAndDisburseLoan(ctx, { n: 3 });
+      const accountId = memberLoanAccountIds[0]!;
+      const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
+      const outstanding = account!.outstandingBalanceKobo!;
+
+      // Only the first of the 3 members' accounts is paid off.
+      await recordAndApproveRepayment(ctx, accountId, outstanding);
+
+      expect((await ctx.memberLoanAccountModel.findById(accountId).exec())!.status).toBe(
+        MemberLoanAccountStatus.CLOSED,
+      );
+      const loanAfter = await ctx.loanModel.findById(loanId).exec();
+      expect(loanAfter!.status).toBe(LoanStatus.DISBURSED);
+    });
+
+    it('reopens a CLOSED Loan back to DISBURSED once a dispute reopens its last-closed MemberLoanAccount', async () => {
+      const { memberLoanAccountIds, loanId } = await raiseApproveVerifyAndDisburseLoan(ctx, { n: 3 });
+
+      let lastApproved: Awaited<ReturnType<typeof recordAndApproveRepayment>> | undefined;
+      for (const accountId of memberLoanAccountIds) {
+        const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
+        lastApproved = await recordAndApproveRepayment(ctx, accountId, account!.outstandingBalanceKobo!);
+      }
+      expect((await ctx.loanModel.findById(loanId).exec())!.status).toBe(LoanStatus.CLOSED);
+
+      await ctx.repaymentsService.raiseDispute(
+        lastApproved!._id.toString(),
+        ctx.INITIATOR_ID,
+        'reopen loan test',
+      );
+
+      const loanAfter = await ctx.loanModel.findById(loanId).exec();
+      expect(loanAfter!.status).toBe(LoanStatus.DISBURSED);
     });
 
     it('rejects the record on workflow rejection with no balance effect', async () => {

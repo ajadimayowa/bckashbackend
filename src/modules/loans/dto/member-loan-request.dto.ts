@@ -1,6 +1,8 @@
-import { IsEnum, IsInt, IsMongoId, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsMongoId, Min, ValidateIf, ValidateNested } from 'class-validator';
 
 import { DisbursementChannel } from '../../../common/enums/loan.enums';
+import { BankAccountDetailsDto } from './bank-account-details.dto';
 
 /**
  * `disbursementChannel` per member — NOT in the brief's literal
@@ -20,4 +22,10 @@ export class MemberLoanRequestDto {
 
   @IsEnum(DisbursementChannel)
   disbursementChannel!: DisbursementChannel;
+
+  /** Required iff disbursementChannel is TRANSFER — re-checked in LoansService.raiseApplication, not just here. */
+  @ValidateIf((dto: MemberLoanRequestDto) => dto.disbursementChannel === DisbursementChannel.TRANSFER)
+  @ValidateNested()
+  @Type(() => BankAccountDetailsDto)
+  bankAccountDetails?: BankAccountDetailsDto;
 }

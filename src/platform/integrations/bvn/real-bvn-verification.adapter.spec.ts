@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Model } from 'mongoose';
-import jwt from 'jsonwebtoken';
 
 import { __resetPiiEncryptionKeyCache } from '../../../common/crypto/pii-encryption';
 import { InMemoryMongo } from '../../../test-utils/in-memory-mongo';
@@ -13,8 +12,7 @@ import { EncryptionService } from '../../encryption/encryption.service';
 import { BvnCallLogService } from './bvn-call-log.service';
 import { BvnHttpClient } from './bvn-http-client.service';
 import { BvnProviderAuthService } from './bvn-provider-auth.service';
-import { BvnConsentExpiredException } from './exceptions/bvn-consent-expired.exception';
-import { BvnOtpInvalidException } from './exceptions/bvn-otp-invalid.exception';
+import { BvnInvalidException } from './exceptions/bvn-invalid.exception';
 import { BvnProviderUnavailableException } from './exceptions/bvn-provider-unavailable.exception';
 import { RealBvnVerificationAdapter } from './real-bvn-verification.adapter';
 import { BvnCallLog, BvnCallLogDocument, BvnCallLogSchema } from './schemas/bvn-call-log.schema';
@@ -27,6 +25,24 @@ function mockResponse(status: number, body: unknown): Response {
     status,
     json: () => Promise.resolve(body),
   } as Response;
+}
+
+/** The real BC Kash MFB `POST /identity/get_bvn` shape — see "BC Kash MFB API Integration Documentation". */
+function bvnResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    RequestStatus: true,
+    ResponseMessage: 'Successful.',
+    isBvnValid: true,
+    bvnDetails: {
+      BVN: '21111111111',
+      phoneNumber: '08161749362',
+      FirstName: 'MUIDEEN',
+      LastName: 'OLADIPUPO',
+      OtherNames: 'OLAIDE',
+      DOB: '29-Oct-74',
+    },
+    ...overrides,
+  };
 }
 
 describe('RealBvnVerificationAdapter', () => {
@@ -74,155 +90,24 @@ describe('RealBvnVerificationAdapter', () => {
     await mongo.stop();
   });
 
-  describe('initiateConsent', () => {
-    it('parses a double-wrapped {success, payload:{...}} response', async () => {
+  describe('directVerify', () => {
+    it('parses a valid response into BvnDetails, mapping the provider\'s PascalCase fields', async () => {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(
-          mockResponse(200, {
-            success: true,
-            payload: {
-              message: 'ok',
-              consentToken: jwt.sign({ bvn: '12345678901' }, 'x', { expiresIn: '10m' }),
-              phoneNumber: '*******4166',
-              expiresInMinutes: 10,
-            },
-          }),
-        );
+        .mockResolvedValueOnce(mockResponse(200, bvnResponse()));
 
-      const result = await adapter.initiateConsent('12345678901');
-
-      expect(result.consentToken).toEqual(expect.any(String));
-      expect(result.otpSentToPhone).toBe('*******4166');
-      expect(result.expiresAt.getTime()).toBeGreaterThan(Date.now());
-
-      const logs = await callLogModel.find({ step: 'CONSENT_INITIATE' }).exec();
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.success).toBe(true);
-    });
-
-    it('throws BvnProviderUnavailableException and logs failure when the provider rejects the call', async () => {
-      fetchSpy = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(mockResponse(422, { error: 'No phone number on record' }));
-
-      await expect(adapter.initiateConsent('12345678901')).rejects.toThrow(
-        BvnProviderUnavailableException,
-      );
-
-      const logs = await callLogModel.find({ step: 'CONSENT_INITIATE' }).exec();
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.success).toBe(false);
-    });
-  });
-
-  describe('confirmConsent', () => {
-    function validConsentToken(): string {
-      return jwt.sign({ bvn: '12345678901' }, 'x', { expiresIn: '10m' });
-    }
-
-    it('parses a double-nested {success, payload:{payload:{...}}} response', async () => {
-      fetchSpy = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(
-          mockResponse(200, {
-            success: true,
-            payload: {
-              message: 'BVN KYC consent verified successfully',
-              payload: {
-                bvn: '12345678901',
-                firstName: 'Ada',
-                lastName: 'Okoye',
-                dateOfBirth: '1990-01-01',
-                phoneNumber: '08012345678',
-                raw: { BVN: '12345678901' },
-              },
-            },
-          }),
-        );
-
-      const details = await adapter.confirmConsent(validConsentToken(), '123456');
+      const details = await adapter.directVerify('21111111111');
 
       expect(details).toEqual({
-        bvn: '12345678901',
-        firstName: 'Ada',
-        lastName: 'Okoye',
-        otherNames: undefined,
-        dateOfBirth: '1990-01-01',
-        phoneNumber: '08012345678',
-        rawResponse: { BVN: '12345678901' },
+        bvn: '21111111111',
+        firstName: 'MUIDEEN',
+        lastName: 'OLADIPUPO',
+        otherNames: 'OLAIDE',
+        dateOfBirth: '29-Oct-74',
+        phoneNumber: '08161749362',
+        rawResponse: bvnResponse(),
       });
-
-      const logs = await callLogModel.find({ step: 'CONSENT_CONFIRM' }).exec();
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.success).toBe(true);
-    });
-
-    it('throws BvnOtpInvalidException on a 401 without retrying (401 is a business outcome here, not an auth failure)', async () => {
-      fetchSpy = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(mockResponse(401, { error: 'Invalid OTP' }));
-
-      await expect(adapter.confirmConsent(validConsentToken(), '000000')).rejects.toThrow(
-        BvnOtpInvalidException,
-      );
-
-      // exactly 2 calls: login + the one verify attempt — no wasted retry
-      expect(fetch).toHaveBeenCalledTimes(2);
-    });
-
-    it('throws BvnConsentExpiredException when the provider reports the token invalid/expired (400)', async () => {
-      fetchSpy = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(
-          mockResponse(400, { error: 'Consent token is invalid or has expired' }),
-        );
-
-      await expect(adapter.confirmConsent(validConsentToken(), '123456')).rejects.toThrow(
-        BvnConsentExpiredException,
-      );
-    });
-
-    it('throws BvnConsentExpiredException client-side, without any HTTP call, for an already-expired token', async () => {
-      fetchSpy = jest.spyOn(global, 'fetch');
-      const expiredToken = jwt.sign({ bvn: '12345678901' }, 'x', { expiresIn: -10 });
-
-      await expect(adapter.confirmConsent(expiredToken, '123456')).rejects.toThrow(
-        BvnConsentExpiredException,
-      );
-      expect(fetch).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('directVerify', () => {
-    it('parses a single-level {success, payload:{...}} response', async () => {
-      fetchSpy = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(
-          mockResponse(200, {
-            message: 'BVN verified successfully',
-            success: true,
-            payload: {
-              bvn: '12345678901',
-              firstName: 'Chuka',
-              lastName: 'Nwosu',
-              dateOfBirth: '1985-05-05',
-              phoneNumber: '08099998888',
-              raw: { BVN: '12345678901' },
-            },
-          }),
-        );
-
-      const details = await adapter.directVerify('12345678901');
-
-      expect(details.firstName).toBe('Chuka');
-      expect(details.bvn).toBe('12345678901');
 
       const logs = await callLogModel.find({ step: 'DIRECT_VERIFY' }).exec();
       expect(logs).toHaveLength(1);
@@ -233,11 +118,9 @@ describe('RealBvnVerificationAdapter', () => {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(
-          mockResponse(200, { data: { bvn: '12345678901', firstName: 'A', lastName: 'B' } }),
-        );
+        .mockResolvedValueOnce(mockResponse(200, bvnResponse()));
 
-      await adapter.directVerify('12345678901', {
+      await adapter.directVerify('21111111111', {
         calledBy: 'staff-1',
         entityType: 'STAFF',
         entityId: 'staff-1',
@@ -249,15 +132,37 @@ describe('RealBvnVerificationAdapter', () => {
       expect(log?.calledForEntityId).toBe('staff-1');
     });
 
-    it('throws BvnProviderUnavailableException on a malformed/failed response', async () => {
+    it('throws BvnInvalidException (not BvnProviderUnavailableException) when the request succeeds but isBvnValid is false', async () => {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
-        .mockResolvedValueOnce(mockResponse(500, { error: 'provider down' }));
+        .mockResolvedValueOnce(
+          mockResponse(200, bvnResponse({ isBvnValid: false, ResponseMessage: 'BVN not found', bvnDetails: undefined })),
+        );
 
-      await expect(adapter.directVerify('12345678901')).rejects.toThrow(
-        BvnProviderUnavailableException,
-      );
+      await expect(adapter.directVerify('00000000000')).rejects.toThrow(BvnInvalidException);
+
+      const logs = await callLogModel.find({ step: 'DIRECT_VERIFY' }).exec();
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.success).toBe(false);
+    });
+
+    it('throws BvnProviderUnavailableException when RequestStatus is false', async () => {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse(200, { RequestStatus: false, ResponseMessage: 'Service error' }));
+
+      await expect(adapter.directVerify('12345678901')).rejects.toThrow(BvnProviderUnavailableException);
+    });
+
+    it('throws BvnProviderUnavailableException with the HTTP status in its message on a non-2xx response — this is the real 404 the wrong endpoint path used to return', async () => {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(mockResponse(200, LOGIN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse(404, { error: 'Not Found' }));
+
+      await expect(adapter.directVerify('12345678901')).rejects.toThrow(/HTTP 404/);
     });
   });
 });

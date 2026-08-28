@@ -20,6 +20,9 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { LoanProductsModule } from './modules/loan-products/loan-products.module';
 import { LoansModule } from './modules/loans/loans.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OrganisationModule } from './modules/organisation/organisation.module';
+import { PlatformConfigModule } from './modules/platform-config/platform-config.module';
+import { ReferenceDataModule } from './modules/reference-data/reference-data.module';
 import { RepaymentsModule } from './modules/repayments/repayments.module';
 
 @Module({
@@ -59,16 +62,17 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
     // Every domain module that reacts to a workflow outcome registers its
     // own `@OnEvent(WORKFLOW_APPROVED_EVENT)` listener (Customer, Loan,
     // Group, LoanProduct, FeeDefinition, Staff, ManualJournalEntry,
-    // RepaymentRecord, EarlyLiquidation, and — as of this phase — both
-    // LeaveApplication and SalaryRecord: 11 listeners on this one event
-    // name alone). EventEmitter2's default `maxListeners` is 10 — Phase 12
-    // was the one that pushed this over the default, surfaced by a genuine
-    // e2e failure (`app.init()` throwing while registering the 11th
-    // listener, since eventemitter2's own memory-leak-warning path itself
-    // errors on newer Node). Raised generously above the current real
-    // count (11), not tuned to the exact number, since this app's own
-    // future maintenance will likely keep adding listeners to this same
-    // handful of workflow events.
+    // RepaymentRecord, EarlyLiquidation, LeaveApplication, SalaryRecord,
+    // and — as of platform-config — LoanConfiguration, RepaymentPenaltyConfiguration,
+    // and BranchRulesConfiguration: 14 listeners on this one event name
+    // alone). EventEmitter2's default `maxListeners` is 10 — Phase 12 was
+    // the one that pushed this over the default, surfaced by a genuine e2e
+    // failure (`app.init()` throwing while registering the 11th listener,
+    // since eventemitter2's own memory-leak-warning path itself errors on
+    // newer Node). Raised generously above the current real count (14), not
+    // tuned to the exact number, since this app's own future maintenance
+    // will likely keep adding listeners to this same handful of workflow
+    // events.
     EventEmitterModule.forRoot({ maxListeners: 30 }),
 
     AuditModule,
@@ -77,10 +81,13 @@ import { RepaymentsModule } from './modules/repayments/repayments.module';
     WorkflowEngineModule,
 
     IdentityModule,
+    OrganisationModule,
+    ReferenceDataModule,
     BranchesModule,
     CustomersModule,
     GroupsModule,
     LoanProductsModule,
+    PlatformConfigModule,
     AccountingModule,
     NotificationsModule,
     LoansModule,

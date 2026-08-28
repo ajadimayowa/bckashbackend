@@ -1,8 +1,12 @@
 # Render Blueprint — API web service.
 #
 # MongoDB is Atlas (external, not provisioned by Render) — set MONGO_URI manually.
-# Redis: point REDIS_HOST/PORT/PASSWORD/TLS at a Render Key Value instance (or any
-# managed Redis) — add one in the Render dashboard and wire its connection details in.
+# Redis: point REDIS_URL at a Render Key Value instance's internal connection string
+# (redis://<host>:6379 — no TLS/auth needed on Render's internal network) or any other
+# managed Redis's URL (rediss://user:pass@host:port also works, TLS auto-detected —
+# see configuration.ts's resolveRedisConfig). REDIS_HOST/PORT/PASSWORD/TLS are only
+# ever a local-dev fallback (see .env.example) and are ignored outright whenever
+# REDIS_URL is set, so this blueprint doesn't declare them at all.
 #
 # A separate `worker` service running BullMQ processors (penalty sweep, notification
 # dispatch, funding reminders) will be added once src/platform/jobs exists (Phase 2+).
@@ -25,14 +29,8 @@ services:
         sync: false
       - key: MONGO_URI
         sync: false
-      - key: REDIS_HOST
+      - key: REDIS_URL
         sync: false
-      - key: REDIS_PORT
-        sync: false
-      - key: REDIS_PASSWORD
-        sync: false
-      - key: REDIS_TLS
-        value: true
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_ACCESS_EXPIRES_IN

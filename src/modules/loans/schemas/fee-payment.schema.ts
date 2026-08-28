@@ -56,6 +56,14 @@ export class FeePayment {
   @Prop({ type: Date, default: null })
   recordedAt!: Date | null;
 
+  /** Which bank account the fee was paid into — free text (branch cash account, bank name, etc.), collected at record time. */
+  @Prop({ type: String, default: null })
+  accountPaidTo!: string | null;
+
+  /** Teller/transfer reference for this payment, collected at record time — never generated, always what was actually given. */
+  @Prop({ type: String, default: null })
+  paymentReference!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

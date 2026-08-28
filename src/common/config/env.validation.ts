@@ -12,13 +12,33 @@ export const envValidationSchema = Joi.object({
 
   MONGO_URI: Joi.string().uri().required(),
 
-  REDIS_HOST: Joi.string().required(),
+  // Single-URL form — set this to switch to a cloud/managed Redis (e.g.
+  // Render's internal `redis://<host>:<port>`, or a `rediss://user:pass@host:port`
+  // TLS URL) without touching the discrete vars below. Whichever is set wins:
+  // REDIS_URL present -> discrete REDIS_HOST/PORT/PASSWORD/TLS are ignored
+  // entirely (see configuration.ts's resolveRedisConfig); absent -> falls
+  // back to them exactly as before (local Redis, REDIS_HOST defaults to
+  // 'localhost' in configuration.ts).
+  // `.allow('')` — same "present but blank, e.g. an unset REDIS_URL= line in
+  // .env.example/.env" reasoning as REDIS_PASSWORD below; an empty string
+  // must NOT count as "REDIS_URL is set" for the REDIS_HOST fallback check
+  // just below, so that check tests non-emptiness explicitly rather than
+  // mere presence.
+  REDIS_URL: Joi.string()
+    .uri({ scheme: ['redis', 'rediss'] })
+    .allow('')
+    .optional(),
+  REDIS_HOST: Joi.string().when('REDIS_URL', {
+    is: Joi.string().min(1).required(),
+    then: Joi.optional(),
+    otherwise: Joi.required(),
+  }),
   REDIS_PORT: Joi.number().port().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').optional(),
   REDIS_TLS: Joi.boolean().default(false),
 
   JWT_ACCESS_SECRET: Joi.string().min(16).required(),
-  JWT_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
+  JWT_ACCESS_EXPIRES_IN: Joi.string().default('4h'),
   JWT_REFRESH_SECRET: Joi.string().min(16).required(),
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('7d'),
 
@@ -75,4 +95,47 @@ export const envValidationSchema = Joi.object({
   // rather than hardcoded magic numbers per the brief's own instruction.
   NOTIFICATION_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
   NOTIFICATION_BACKOFF_BASE_DELAY_MS: Joi.number().integer().positive().default(5000),
+
+  // `npm run seed` bootstrap SuperAdmin — see src/database/seeders. Optional
+  // at the app-boot/validation level (the normal server never needs these),
+  // but the seeder script itself refuses to run without email/password set.
+  SEED_SUPERADMIN_EMAIL: Joi.string().email().allow('').optional(),
+  SEED_SUPERADMIN_PASSWORD: Joi.string().allow('').optional(),
+  SEED_SUPERADMIN_FIRST_NAME: Joi.string().allow('').optional(),
+  SEED_SUPERADMIN_LAST_NAME: Joi.string().allow('').optional(),
+  SEED_SUPERADMIN_PHONE_NUMBER: Joi.string().allow('').optional(),
+  // Initiator/Authorizer RBAC (see identity.enums.ts's StaffUserType doc
+  // comment) — the bootstrap SuperAdmin's userType. Defaults to Authorizer
+  // when unset (configuration.ts); Reviewer is deliberately not a valid
+  // value here (see StaffService.resolveUserType — no longer assignable to
+  // any of the four non-MARKETER roles going forward).
+  SEED_SUPERADMIN_USER_TYPE: Joi.string().valid('Initiator', 'Authorizer').allow('').optional(),
+
+  // Login OTP step (modules/identity/auth-otp.service.ts) — issued after a
+  // correct email+password, required before an access/refresh token pair is
+  // handed out. AUTH_OTP_DEFAULT_CODE, when set, replaces random generation
+  // with this fixed value on every challenge issued — a dev/QA convenience
+  // so a tester never has to check an inbox. *** NEVER SET THIS IN
+  // PRODUCTION *** — every staff member's login OTP becomes this one
+  // predictable value, which defeats the entire point of a second factor.
+  AUTH_OTP_TTL_SECONDS: Joi.number().integer().positive().default(600),
+  AUTH_OTP_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
+  AUTH_OTP_DEFAULT_CODE: Joi.string().allow('').optional(),
+
+  // Forgot-password step (modules/identity/password-reset.service.ts) —
+  // issued when a staff member requests a reset code without logging in.
+  // Same "dev/QA only, never in production" caveat as AUTH_OTP_DEFAULT_CODE
+  // above applies to PASSWORD_RESET_DEFAULT_CODE.
+  PASSWORD_RESET_TTL_SECONDS: Joi.number().integer().positive().default(600),
+  PASSWORD_RESET_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
+  PASSWORD_RESET_DEFAULT_CODE: Joi.string().allow('').optional(),
+
+  // CustomerService.assertPhoneNumberAvailable — "no two customers may share
+  // a phone number" is on by default; this exists purely so a downstream
+  // BVN provider issue (e.g. an endpoint returning the same canned identity
+  // for every BVN, in which case every verification after the first
+  // legitimately collides) doesn't block onboarding entirely while that gets
+  // sorted out. *** LEAVE THIS TRUE IN PRODUCTION *** — turning it off lets
+  // multiple real customer records share one phone number.
+  CUSTOMER_ENFORCE_UNIQUE_PHONE: Joi.boolean().default(true),
 });

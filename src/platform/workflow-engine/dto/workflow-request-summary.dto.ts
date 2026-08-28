@@ -1,5 +1,23 @@
-import { WorkflowStatus } from '../../../common/enums/workflow.enums';
+import { WorkflowStatus, WorkflowStepAction } from '../../../common/enums/workflow.enums';
 import { WorkflowRequestDocument } from '../schemas/workflow-request.schema';
+
+/**
+ * Deliberately just the step's own outcome fields — no payload attached (see
+ * this file's own doc comment on why payload stays out of the summary DTO).
+ * Exists so a caller can show "who approved/rejected this, and when/why"
+ * (e.g. a Rejected tab's `comment`) without a second round-trip to the
+ * detail endpoint.
+ */
+export class WorkflowStepSummaryDto {
+  order!: number;
+  requiredCapability!: string;
+  actedBy!: string | null;
+  /** Resolved via WorkflowRequestsController's own bulk staff-name lookup — null for a step nobody has acted on yet, or a staff record that no longer exists. */
+  actedByName!: string | null;
+  action!: WorkflowStepAction | null;
+  comment!: string | null;
+  actedAt!: Date | null;
+}
 
 /**
  * A safe-to-return shape for "I just initiated/acted on a WorkflowRequest"
@@ -19,10 +37,17 @@ export class WorkflowRequestSummaryDto {
   status!: WorkflowStatus;
   currentStepIndex!: number;
   initiatedBy!: string;
+  /** Resolved via WorkflowRequestsController's own bulk staff-name lookup — null if that staff record no longer exists. */
+  initiatedByName!: string | null;
   branchId!: string | null;
   createdAt!: Date;
+  steps!: WorkflowStepSummaryDto[];
 
-  static fromDocument(doc: WorkflowRequestDocument): WorkflowRequestSummaryDto {
+  /** `namesById` — staffId -> "First Last", built once per request by the controller (see its own doc comment) rather than N+1 looked up per document. */
+  static fromDocument(
+    doc: WorkflowRequestDocument,
+    namesById: Map<string, string> = new Map(),
+  ): WorkflowRequestSummaryDto {
     const dto = new WorkflowRequestSummaryDto();
     dto.id = doc._id.toString();
     dto.entityType = doc.entityType;
@@ -31,8 +56,18 @@ export class WorkflowRequestSummaryDto {
     dto.status = doc.status;
     dto.currentStepIndex = doc.currentStepIndex;
     dto.initiatedBy = doc.initiatedBy;
+    dto.initiatedByName = namesById.get(doc.initiatedBy) ?? null;
     dto.branchId = doc.branchId;
     dto.createdAt = doc.createdAt;
+    dto.steps = doc.steps.map((step) => ({
+      order: step.order,
+      requiredCapability: step.requiredCapability,
+      actedBy: step.actedBy,
+      actedByName: step.actedBy ? (namesById.get(step.actedBy) ?? null) : null,
+      action: step.action,
+      comment: step.comment,
+      actedAt: step.actedAt,
+    }));
     return dto;
   }
 }

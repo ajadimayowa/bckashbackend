@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -8,6 +8,7 @@ import { Model, Types } from 'mongoose';
 
 import { __resetPiiEncryptionKeyCache } from '../../common/crypto/pii-encryption';
 import { CustomerStatus, KycStatus } from '../../common/enums/customer.enums';
+import { StaffRole } from '../../common/enums/identity.enums';
 import {
   FeeAppliesTo,
   FeeCalcType,
@@ -19,10 +20,11 @@ import {
 import {
   DisbursementChannel,
   DisbursementVerificationStatus,
+  FeePaymentStatus,
   LoanStatus,
   MemberLoanAccountStatus,
 } from '../../common/enums/loan.enums';
-import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
+import { WorkflowEntityType, WorkflowStatus, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
 import { testAwsConfigModule } from '../../test-utils/test-aws-config.module';
 import { AuditModule } from '../../platform/audit/audit.module';
@@ -31,10 +33,7 @@ import { EncryptionService } from '../../platform/encryption/encryption.service'
 import { BvnCallLogService } from '../../platform/integrations/bvn/bvn-call-log.service';
 import { BvnProviderUnavailableException } from '../../platform/integrations/bvn/exceptions/bvn-provider-unavailable.exception';
 import { BVN_VERIFICATION_ADAPTER } from '../../platform/integrations/bvn/interfaces/bvn-verification-adapter.interface';
-import {
-  MOCK_BVN_OTP,
-  MockBvnVerificationAdapter,
-} from '../../platform/integrations/bvn/mock-bvn-verification.adapter';
+import { MockBvnVerificationAdapter } from '../../platform/integrations/bvn/mock-bvn-verification.adapter';
 import {
   BvnCallLog,
   BvnCallLogSchema,
@@ -69,13 +68,11 @@ import {
   BranchFundBalanceSchema,
 } from '../branches/schemas/branch-fund-balance.schema';
 import { Branch, BranchDocument, BranchSchema } from '../branches/schemas/branch.schema';
+import { Staff, StaffSchema } from '../identity/schemas/staff.schema';
 import { CustomerService } from '../customers/customer.service';
 import { Customer, CustomerDocument, CustomerSchema } from '../customers/schemas/customer.schema';
 import { KycRecord, KycRecordSchema } from '../customers/schemas/kyc-record.schema';
-import {
-  PendingBvnConsent,
-  PendingBvnConsentSchema,
-} from '../customers/schemas/pending-bvn-consent.schema';
+import { BvnVerificationPreview, BvnVerificationPreviewSchema } from '../customers/schemas/bvn-verification-preview.schema';
 import { calculateFlatInterestSchedule } from '../loan-products/calculations';
 import { CreateFeeDefinitionDto } from '../loan-products/dto/create-fee-definition.dto';
 import { CreateLoanProductDto } from '../loan-products/dto/create-loan-product.dto';
@@ -101,6 +98,7 @@ import { BANK_TRANSFER_PORT } from './interfaces/bank-transfer-port.interface';
 import { LEDGER_POSTING_PORT } from './interfaces/ledger-posting-port.interface';
 import { NOTIFICATION_PORT } from './interfaces/notification-port.interface';
 import { StubLedgerPostingPort } from './ledger/stub-ledger-posting.port';
+import { LoanConsentService } from './loan-consent.service';
 import { LoanVerificationService } from './loan-verification.service';
 import { LoansService } from './loans.service';
 import { PendingNotificationLogPort } from './notifications/pending-notification-log.port';
@@ -116,6 +114,10 @@ import {
 } from './schemas/disbursement-verification.schema';
 import { FeePayment, FeePaymentSchema } from './schemas/fee-payment.schema';
 import {
+  LoanConsentChallenge,
+  LoanConsentChallengeSchema,
+} from './schemas/loan-consent-challenge.schema';
+import {
   MemberLoanAccount,
   MemberLoanAccountDocument,
   MemberLoanAccountSchema,
@@ -127,6 +129,8 @@ describe('LoansService & LoanVerificationService', () => {
 
   let moduleRef: TestingModule;
   let loansService: LoansService;
+  let loanConsentService: LoanConsentService;
+  let feePaymentsService: FeePaymentsService;
   let loanVerificationService: LoanVerificationService;
   let groupsService: GroupsService;
   let loanProductsService: LoanProductsService;
@@ -197,10 +201,11 @@ describe('LoansService & LoanVerificationService', () => {
           { name: Group.name, schema: GroupSchema },
           { name: GroupMembership.name, schema: GroupMembershipSchema },
           { name: Branch.name, schema: BranchSchema },
+          { name: Staff.name, schema: StaffSchema },
           { name: BranchFundBalance.name, schema: BranchFundBalanceSchema },
           { name: Customer.name, schema: CustomerSchema },
           { name: KycRecord.name, schema: KycRecordSchema },
-          { name: PendingBvnConsent.name, schema: PendingBvnConsentSchema },
+          { name: BvnVerificationPreview.name, schema: BvnVerificationPreviewSchema },
           { name: BvnCallLog.name, schema: BvnCallLogSchema },
           { name: FaceComparisonCallLog.name, schema: FaceComparisonCallLogSchema },
           { name: LoanProduct.name, schema: LoanProductSchema },
@@ -208,6 +213,7 @@ describe('LoansService & LoanVerificationService', () => {
           { name: WorkflowChainConfig.name, schema: WorkflowChainConfigSchema },
           { name: WorkflowRequest.name, schema: WorkflowRequestSchema },
           { name: PendingNotificationLog.name, schema: PendingNotificationLogSchema },
+          { name: LoanConsentChallenge.name, schema: LoanConsentChallengeSchema },
         ]),
         AuditModule,
         EventEmitterModule.forRoot(),
@@ -217,6 +223,7 @@ describe('LoansService & LoanVerificationService', () => {
         LoansService,
         LoanVerificationService,
         FeePaymentsService,
+        LoanConsentService,
         GroupsService,
         LoanProductsService,
         FeeDefinitionsService,
@@ -246,6 +253,8 @@ describe('LoansService & LoanVerificationService', () => {
     }).compile();
 
     loansService = moduleRef.get(LoansService);
+    loanConsentService = moduleRef.get(LoanConsentService);
+    feePaymentsService = moduleRef.get(FeePaymentsService);
     loanVerificationService = moduleRef.get(LoanVerificationService);
     groupsService = moduleRef.get(GroupsService);
     loanProductsService = moduleRef.get(LoanProductsService);
@@ -324,18 +333,26 @@ describe('LoansService & LoanVerificationService', () => {
     return customer._id.toString();
   }
 
-  /** Full BVN-consent + biometric-capture flow — needed for verification tests. */
+  /**
+   * Full BVN-verification + biometric-capture flow — needed for
+   * verification tests. Also fast-forwards `status` straight to ACTIVE
+   * (bypassing the customer's own review/approve workflow, which isn't
+   * what these loan-focused tests are exercising) — GroupsService's
+   * pre-approval validator now requires every proposed member to be an
+   * ACTIVE customer before a group itself can be approved, and every
+   * caller here immediately builds a group out of these customers.
+   */
   async function createVerifiedCustomerWithBiometrics(): Promise<string> {
     customerCounter += 1;
     const bvn = `${10_000_000_000 + customerCounter}`.slice(0, 11);
-    const { pendingConsentId } = await customerService.startBvnConsent(bvn, INITIATOR_ID, branchId);
-    const customer = await customerService.confirmBvnConsent(pendingConsentId, MOCK_BVN_OTP);
+    const { customer } = await customerService.verifyBvnAndCreateCustomer(bvn, branchId, INITIATOR_ID);
     await customerService.captureBiometric(
       customer._id.toString(),
       Buffer.from('biometric-image'),
       'image/jpeg',
       INITIATOR_ID,
     );
+    await customerModel.updateOne({ _id: customer._id }, { $set: { status: CustomerStatus.ACTIVE } }).exec();
     return customer._id.toString();
   }
 
@@ -348,6 +365,25 @@ describe('LoansService & LoanVerificationService', () => {
       ids.push(await factory());
     }
     return ids;
+  }
+
+  /**
+   * Issues a real LoanConsentChallenge for `customerId` and recovers the
+   * plaintext code from the PendingNotificationLog stub's payload (the only
+   * place it exists outside the one-way hash — see LoanConsentService's own
+   * comment) — every `raiseApplication` call in this file needs one.
+   */
+  async function issueConsent(customerId: string): Promise<{ challengeId: string; code: string }> {
+    const { challengeId } = await loanConsentService.issueChallenge(customerId, INITIATOR_ID);
+    const log = await pendingNotificationLogModel
+      .findOne({ recipientCustomerId: new Types.ObjectId(customerId) })
+      .sort({ createdAt: -1 })
+      .exec();
+    const code = (log?.payload as { code?: string } | undefined)?.code;
+    if (!code) {
+      throw new Error(`issueConsent: no PendingNotificationLog code found for customer ${customerId}`);
+    }
+    return { challengeId, code };
   }
 
   async function approveGroupCreation(request: WorkflowRequestDocument): Promise<void> {
@@ -412,7 +448,7 @@ describe('LoansService & LoanVerificationService', () => {
       name: `Product-${Date.now()}-${Math.random()}`,
       interestRate: 1_800,
       interestType: InterestType.FLAT,
-      tenureOptions: [6, 12],
+      tenureOptions: [14, 30],
       minGroupSize: 3,
       feeIds: [],
       approvalChainSteps: [
@@ -464,6 +500,7 @@ describe('LoansService & LoanVerificationService', () => {
       n,
     );
     const product = await createApprovedProduct(productOverrides);
+    const { challengeId, code } = await issueConsent(customerIds[0]!);
     const result = await loansService.raiseApplication(
       groupId,
       product._id.toString(),
@@ -472,8 +509,11 @@ describe('LoansService & LoanVerificationService', () => {
         customerId,
         requestedAmountKobo: 200_000,
         disbursementChannel: DisbursementChannel.TRANSFER,
+        bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
       })),
       INITIATOR_ID,
+      challengeId,
+      code,
     );
     await approveLoan(result.loan._id.toString());
     return { groupId, customerIds, product, loanId: result.loan._id.toString() };
@@ -499,6 +539,7 @@ describe('LoansService & LoanVerificationService', () => {
         3,
       );
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       let caught: ConflictException | undefined;
       try {
@@ -510,8 +551,11 @@ describe('LoansService & LoanVerificationService', () => {
             customerId,
             requestedAmountKobo: 100_000,
             disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
           })),
           INITIATOR_ID,
+          challengeId,
+          code,
         );
       } catch (error) {
         caught = error as ConflictException;
@@ -522,9 +566,136 @@ describe('LoansService & LoanVerificationService', () => {
       expect(response.ineligibleMembers?.some((m) => m.reason === 'KYC not complete')).toBe(true);
     });
 
-    it('rejects an out-of-range tenureMonths', async () => {
+    it('rejects raising without a valid consent code — wrong code', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
-      const product = await createApprovedProduct({ tenureOptions: [6, 12] });
+      const product = await createApprovedProduct();
+      const { challengeId } = await issueConsent(customerIds[0]!);
+
+      await expect(
+        loansService.raiseApplication(
+          groupId,
+          product._id.toString(),
+          product.tenureOptions[0]!,
+          customerIds.map((customerId) => ({
+            customerId,
+            requestedAmountKobo: 100_000,
+            disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
+          })),
+          INITIATOR_ID,
+          challengeId,
+          '000000',
+        ),
+      ).rejects.toThrow(/consent code/i);
+    });
+
+    it('rejects raising with a consent code issued for a customer not in this application', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const outsiderCustomerId = await createCustomer();
+      const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(outsiderCustomerId);
+
+      await expect(
+        loansService.raiseApplication(
+          groupId,
+          product._id.toString(),
+          product.tenureOptions[0]!,
+          customerIds.map((customerId) => ({
+            customerId,
+            requestedAmountKobo: 100_000,
+            disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
+          })),
+          INITIATOR_ID,
+          challengeId,
+          code,
+        ),
+      ).rejects.toThrow(/not issued for any customer/);
+    });
+
+    it('rejects reusing an already-consumed consent code', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
+      const memberLoanRequests = customerIds.map((customerId) => ({
+        customerId,
+        requestedAmountKobo: 100_000,
+        disbursementChannel: DisbursementChannel.TRANSFER,
+        bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
+      }));
+
+      await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        memberLoanRequests,
+        INITIATOR_ID,
+        challengeId,
+        code,
+      );
+
+      await expect(
+        loansService.raiseApplication(
+          groupId,
+          product._id.toString(),
+          product.tenureOptions[0]!,
+          memberLoanRequests,
+          INITIATOR_ID,
+          challengeId,
+          code,
+        ),
+      ).rejects.toThrow(/consent code/i);
+    });
+
+    it('rejects a TRANSFER member request with no bankAccountDetails', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
+
+      await expect(
+        loansService.raiseApplication(
+          groupId,
+          product._id.toString(),
+          product.tenureOptions[0]!,
+          customerIds.map((customerId) => ({
+            customerId,
+            requestedAmountKobo: 100_000,
+            disbursementChannel: DisbursementChannel.TRANSFER,
+          })),
+          INITIATOR_ID,
+          challengeId,
+          code,
+        ),
+      ).rejects.toThrow(/bankAccountDetails is required/);
+    });
+
+    it('allows a CHEQUE_PICKUP member request with no bankAccountDetails', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
+
+      const result = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        challengeId,
+        code,
+      );
+
+      expect(result.loan.status).toBe(LoanStatus.PENDING_APPROVAL);
+      expect(result.memberLoanAccounts.every((a) => a.bankAccountDetails === null)).toBe(true);
+    });
+
+    it('rejects an out-of-range tenureDays', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct({ tenureOptions: [14, 30] });
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       await expect(
         loansService.raiseApplication(
@@ -535,8 +706,11 @@ describe('LoansService & LoanVerificationService', () => {
             customerId,
             requestedAmountKobo: 100_000,
             disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
           })),
           INITIATOR_ID,
+          challengeId,
+          code,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -544,6 +718,8 @@ describe('LoansService & LoanVerificationService', () => {
     it('correctly computes cumulativeAmountKobo', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
+      const bankAccountDetails = { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' };
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -554,19 +730,24 @@ describe('LoansService & LoanVerificationService', () => {
             customerId: customerIds[0]!,
             requestedAmountKobo: 100_000,
             disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails,
           },
           {
             customerId: customerIds[1]!,
             requestedAmountKobo: 150_000,
             disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails,
           },
           {
             customerId: customerIds[2]!,
             requestedAmountKobo: 75_000,
             disbursementChannel: DisbursementChannel.TRANSFER,
+            bankAccountDetails,
           },
         ],
         INITIATOR_ID,
+        challengeId,
+        code,
       );
 
       expect(result.loan.cumulativeAmountKobo).toBe(325_000);
@@ -575,6 +756,7 @@ describe('LoansService & LoanVerificationService', () => {
     it('creates Loan/MemberLoanAccount immediately and calls NotificationPort immediately, before any workflow action', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -584,8 +766,11 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
         })),
         INITIATOR_ID,
+        challengeId,
+        code,
       );
 
       // Immediate persistence — not deferred until approval.
@@ -614,6 +799,7 @@ describe('LoansService & LoanVerificationService', () => {
     it('the workflow request carries the pre-existing loan._id as entityId and uses the dynamically-registered LOAN/APPROVE_<productId> chain', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -623,8 +809,11 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
         })),
         INITIATOR_ID,
+        challengeId,
+        code,
       );
 
       expect(result.workflowRequest.entityId).toBe(result.loan._id.toString());
@@ -638,6 +827,8 @@ describe('LoansService & LoanVerificationService', () => {
       const feeId = await createApprovedFee({ timing: FeeTiming.PRE_LOAN, value: 2_000 });
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct({ feeIds: [feeId] });
+      const bankAccountDetails = { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' };
+      const firstConsent = await issueConsent(customerIds[0]!);
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -647,8 +838,11 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails,
         })),
         INITIATOR_ID,
+        firstConsent.challengeId,
+        firstConsent.code,
       );
 
       // Nothing paid yet — every member's fee is outstanding, but the loan
@@ -672,6 +866,14 @@ describe('LoansService & LoanVerificationService', () => {
         recordedAt: new Date(),
       });
 
+      // The first loan is still PENDING_APPROVAL — raising a second one for
+      // the same customers is now blocked (see the new "one loan at a time
+      // per customer" describe block below) unless the first is resolved
+      // first. Reject it purely to unblock this fee-status test, which
+      // isn't itself testing that rule.
+      await loansService.rejectLoan(result.loan._id.toString(), 'superseded by test');
+
+      const secondConsent = await issueConsent(customerIds[0]!);
       const secondResult = await loansService.raiseApplication(
         groupId,
         product._id.toString(),
@@ -680,10 +882,276 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails,
         })),
         INITIATOR_ID,
+        secondConsent.challengeId,
+        secondConsent.code,
       );
       expect(secondResult.outstandingPreLoanFees).toHaveLength(2);
+    });
+  });
+
+  describe('one loan at a time per customer', () => {
+    it('rejects raising a second loan while a member already has a pending loan', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const firstConsent = await issueConsent(customerIds[0]!);
+      await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        firstConsent.challengeId,
+        firstConsent.code,
+      );
+
+      const secondConsent = await issueConsent(customerIds[0]!);
+      await expect(
+        loansService.raiseApplication(
+          groupId,
+          product._id.toString(),
+          product.tenureOptions[0]!,
+          customerIds.map((customerId) => ({
+            customerId,
+            requestedAmountKobo: 100_000,
+            disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+          })),
+          INITIATOR_ID,
+          secondConsent.challengeId,
+          secondConsent.code,
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('allows raising a new loan once the previous one is rejected', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const firstConsent = await issueConsent(customerIds[0]!);
+      const first = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        firstConsent.challengeId,
+        firstConsent.code,
+      );
+      await loansService.rejectLoan(first.loan._id.toString(), 'test');
+
+      const secondConsent = await issueConsent(customerIds[0]!);
+      const second = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        secondConsent.challengeId,
+        secondConsent.code,
+      );
+      expect(second.loan.status).toBe(LoanStatus.PENDING_APPROVAL);
+    });
+  });
+
+  describe('updatePendingApplication', () => {
+    it('updates tenureDays, purpose, and a member amount while PENDING_APPROVAL, re-deriving cumulativeAmountKobo', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct({ tenureOptions: [14, 30] });
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        14,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+
+      const { loan, memberLoanAccounts } = await loansService.updatePendingApplication(
+        raised.loan._id.toString(),
+        INITIATOR_ID,
+        {
+          tenureDays: 30,
+          purpose: 'Updated purpose',
+          memberLoanRequests: [
+            {
+              customerId: customerIds[0]!,
+              requestedAmountKobo: 150_000,
+              disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+            },
+          ],
+        },
+      );
+
+      expect(loan.tenureDays).toBe(30);
+      expect(loan.purpose).toBe('Updated purpose');
+      const updatedAccount = memberLoanAccounts.find((a) => a.customerId.toString() === customerIds[0]);
+      expect(updatedAccount?.principalAmountKobo).toBe(150_000);
+      expect(loan.cumulativeAmountKobo).toBe(150_000 + 100_000 + 100_000);
+    });
+
+    it('rejects editing once the loan has been approved', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+      await approveLoan(raised.loan._id.toString());
+
+      await expect(
+        loansService.updatePendingApplication(raised.loan._id.toString(), INITIATOR_ID, { purpose: 'nope' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rejects editing by anyone other than the raiser', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+
+      await expect(
+        loansService.updatePendingApplication(
+          raised.loan._id.toString(),
+          new Types.ObjectId().toString(),
+          { purpose: 'nope' },
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('deleteLoan', () => {
+    it('hard-deletes a PENDING_APPROVAL loan and every MemberLoanAccount, cancelling the WorkflowRequest', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+      const loanId = raised.loan._id.toString();
+
+      await loansService.deleteLoan(loanId, INITIATOR_ID);
+
+      await expect(loansService.findByIdOrThrow(loanId)).rejects.toThrow(NotFoundException);
+      const remainingAccounts = await loansService.getMemberLoanAccounts(loanId);
+      expect(remainingAccounts).toHaveLength(0);
+
+      const history = await workflowEngineService.getHistory(WorkflowEntityType.LOAN, loanId);
+      expect(history[history.length - 1]?.status).toBe(WorkflowStatus.CANCELLED);
+
+      // Deleting it freed the customers up to be raised for again.
+      const secondConsent = await issueConsent(customerIds[0]!);
+      const second = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        secondConsent.challengeId,
+        secondConsent.code,
+      );
+      expect(second.loan.status).toBe(LoanStatus.PENDING_APPROVAL);
+    });
+
+    it('rejects deleting once the loan has been approved', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+      await approveLoan(raised.loan._id.toString());
+
+      await expect(loansService.deleteLoan(raised.loan._id.toString(), INITIATOR_ID)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('rejects deleting by anyone other than the raiser', async () => {
+      const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
+      const product = await createApprovedProduct();
+      const consent = await issueConsent(customerIds[0]!);
+      const raised = await loansService.raiseApplication(
+        groupId,
+        product._id.toString(),
+        product.tenureOptions[0]!,
+        customerIds.map((customerId) => ({
+          customerId,
+          requestedAmountKobo: 100_000,
+          disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        })),
+        INITIATOR_ID,
+        consent.challengeId,
+        consent.code,
+      );
+
+      await expect(
+        loansService.deleteLoan(raised.loan._id.toString(), new Types.ObjectId().toString()),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -695,6 +1163,7 @@ describe('LoansService & LoanVerificationService', () => {
     it('rejection closes all MemberLoanAccounts without ever activating them', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -704,8 +1173,11 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
         })),
         INITIATOR_ID,
+        challengeId,
+        code,
       );
 
       await workflowEngineService.act({
@@ -726,6 +1198,7 @@ describe('LoansService & LoanVerificationService', () => {
     it('approval sets Loan.status = APPROVED', async () => {
       const { groupId, customerIds } = await createApprovedGroup(createCustomer, 3);
       const product = await createApprovedProduct();
+      const { challengeId, code } = await issueConsent(customerIds[0]!);
 
       const result = await loansService.raiseApplication(
         groupId,
@@ -735,8 +1208,11 @@ describe('LoansService & LoanVerificationService', () => {
           customerId,
           requestedAmountKobo: 100_000,
           disbursementChannel: DisbursementChannel.TRANSFER,
+          bankAccountDetails: { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' },
         })),
         INITIATOR_ID,
+        challengeId,
+        code,
       );
 
       await approveLoan(result.loan._id.toString());
@@ -1033,7 +1509,7 @@ describe('LoansService & LoanVerificationService', () => {
       const { loanId, customerIds, product } = await raiseAndApproveLoan(3, {
         interestType: InterestType.FLAT,
         interestRate: 1_800,
-        tenureOptions: [6],
+        tenureOptions: [14],
       });
 
       for (const customerId of customerIds) {
@@ -1043,11 +1519,15 @@ describe('LoansService & LoanVerificationService', () => {
       const accounts = await memberLoanAccountModel
         .find({ loanId: new Types.ObjectId(loanId) })
         .exec();
+      // One installment per repaymentPeriodDays-day cycle (7 = weekly, the
+      // default), not one per calendar day of tenure — see
+      // LoanProduct.repaymentPeriodDays's own doc comment.
+      const installmentCount = Math.ceil(product.tenureOptions[0]! / product.repaymentPeriodDays);
       for (const account of accounts) {
         const expected = calculateFlatInterestSchedule(
           account.principalAmountKobo,
           product.interestRate,
-          product.tenureOptions[0]!,
+          installmentCount,
         );
         expect(account.schedule).toHaveLength(expected.schedule.length);
         expected.schedule.forEach((expectedEntry, index) => {
@@ -1060,6 +1540,291 @@ describe('LoansService & LoanVerificationService', () => {
           account.principalAmountKobo + expected.totalInterestKobo,
         );
       }
+    });
+  });
+
+  describe('getMemberLoanAccountsForCustomer', () => {
+    it('returns every MemberLoanAccount for a customer, enriched with the parent loan/product, newest first', async () => {
+      const { customerIds, product, loanId } = await raiseAndApproveLoan(3);
+      const customerId = customerIds[0]!;
+
+      const history = await loansService.getMemberLoanAccountsForCustomer(customerId);
+
+      expect(history).toHaveLength(1);
+      const [item] = history;
+      expect(item!.loanId).toBe(loanId);
+      expect(item!.loanStatus).toBe(LoanStatus.APPROVED);
+      expect(item!.status).toBe(MemberLoanAccountStatus.PENDING);
+      expect(item!.principalAmountKobo).toBe(200_000);
+      expect(item!.productId).toBe(product._id.toString());
+      expect(item!.productName).toBe(product.name);
+      expect(item!.interestRateBasisPoints).toBe(product.interestRate);
+      expect(item!.tenureDays).toBe(product.tenureOptions[0]);
+      expect(item!.disbursedAt).toBeNull();
+    });
+
+    it('returns an empty array for a customer with no loan history', async () => {
+      const customerId = await createCustomer();
+      await expect(loansService.getMemberLoanAccountsForCustomer(customerId)).resolves.toEqual([]);
+    });
+  });
+
+  describe('listForActor', () => {
+    it('returns an enriched summary row — group name, product name, member count, cumulative amount', async () => {
+      const { groupId, customerIds, product, loanId } = await raiseAndApproveLoan(3);
+
+      const rows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.SUPERADMIN },
+      );
+
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      expect(row!.id).toBe(loanId);
+      expect(row!.groupId).toBe(groupId);
+      expect(row!.productId).toBe(product._id.toString());
+      expect(row!.productName).toBe(product.name);
+      expect(row!.memberCount).toBe(customerIds.length);
+      expect(row!.cumulativeAmountKobo).toBe(200_000 * customerIds.length);
+      // Not yet disbursed — every MemberLoanAccount.outstandingBalanceKobo is still null.
+      expect(row!.outstandingBalanceKobo).toBe(0);
+      expect(row!.status).toBe(LoanStatus.APPROVED);
+    });
+
+    it('estimates totalInterestKobo/totalRepayableKobo (and resolves member names) before disbursement', async () => {
+      // FLAT, 18% (1_800 bps), tenure 14 days / repaymentPeriodDays 7 (default) => 2 installments,
+      // but FLAT's totalInterestKobo doesn't depend on installment count — just principal * rate.
+      const { customerIds, loanId } = await raiseAndApproveLoan(3);
+
+      const rows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.SUPERADMIN },
+      );
+      const row = rows.find((r) => r.id === loanId);
+
+      expect(row!.memberCustomerNames).toHaveLength(customerIds.length);
+      expect(row!.memberCustomerNames.every((name) => name && name !== '—')).toBe(true);
+      expect(row!.interestIsEstimate).toBe(true);
+      // 200_000 * 1_800 / 10_000 = 36_000 per member, x3 members.
+      expect(row!.totalInterestKobo).toBe(36_000 * 3);
+      expect(row!.totalRepayableKobo).toBe(row!.cumulativeAmountKobo + row!.totalInterestKobo);
+    });
+
+    it('switches to the real, schedule-derived totalInterestKobo once disbursed', async () => {
+      const { loanId, customerIds } = await raiseAndApproveLoan(3);
+      await passVerification(loanId, customerIds[0]!);
+      await passVerification(loanId, customerIds[1]!);
+      await passVerification(loanId, customerIds[2]!);
+
+      const rows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.SUPERADMIN },
+      );
+      const row = rows.find((r) => r.id === loanId);
+
+      const accounts = await memberLoanAccountModel
+        .find({ loanId: new Types.ObjectId(loanId) })
+        .exec();
+      const expectedInterest = accounts.reduce(
+        (sum, account) => sum + account.schedule.reduce((s, entry) => s + entry.interestPortion, 0),
+        0,
+      );
+
+      expect(row!.interestIsEstimate).toBe(false);
+      expect(row!.totalInterestKobo).toBe(expectedInterest);
+      expect(row!.totalRepayableKobo).toBe(row!.cumulativeAmountKobo + expectedInterest);
+    });
+
+    it("a MANAGER only sees their own branch's loans", async () => {
+      await raiseAndApproveLoan(3);
+      const otherBranch = await branchModel.create({ name: 'Other', code: `BR${Date.now()}X`, active: true });
+
+      const ownBranchRows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.MANAGER, branchId },
+      );
+      expect(ownBranchRows).toHaveLength(1);
+
+      const otherBranchRows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.MANAGER, branchId: otherBranch._id.toString() },
+      );
+      expect(otherBranchRows).toEqual([]);
+    });
+
+    it('a MARKETER only sees loans they themselves raised', async () => {
+      await raiseAndApproveLoan(3);
+      const otherMarketerId = new Types.ObjectId().toString();
+
+      const ownRows = await loansService.listForActor(
+        {},
+        { staffId: INITIATOR_ID, role: StaffRole.MARKETER, branchId },
+      );
+      expect(ownRows).toHaveLength(1);
+
+      const otherRows = await loansService.listForActor(
+        {},
+        { staffId: otherMarketerId, role: StaffRole.MARKETER, branchId },
+      );
+      expect(otherRows).toEqual([]);
+    });
+
+    it('an ADMIN/SUPERADMIN/APPROVER may filter to one marketer\'s loans via raisedBy', async () => {
+      const { loanId } = await raiseAndApproveLoan(3);
+      const otherMarketerId = new Types.ObjectId().toString();
+
+      const matching = await loansService.listForActor(
+        { raisedBy: INITIATOR_ID },
+        { staffId: new Types.ObjectId().toString(), role: StaffRole.SUPERADMIN },
+      );
+      expect(matching.map((r) => r.id)).toEqual([loanId]);
+
+      const nonMatching = await loansService.listForActor(
+        { raisedBy: otherMarketerId },
+        { staffId: new Types.ObjectId().toString(), role: StaffRole.SUPERADMIN },
+      );
+      expect(nonMatching).toEqual([]);
+    });
+
+    it('raisedBy is ignored for a MANAGER (still branch-locked) and a MARKETER (already forced to their own)', async () => {
+      await raiseAndApproveLoan(3);
+      const otherMarketerId = new Types.ObjectId().toString();
+
+      const managerRows = await loansService.listForActor(
+        { raisedBy: otherMarketerId },
+        { staffId: new Types.ObjectId().toString(), role: StaffRole.MANAGER, branchId },
+      );
+      expect(managerRows).toHaveLength(1);
+
+      const marketerRows = await loansService.listForActor(
+        { raisedBy: otherMarketerId },
+        { staffId: INITIATOR_ID, role: StaffRole.MARKETER, branchId },
+      );
+      expect(marketerRows).toHaveLength(1);
+    });
+  });
+
+  describe('FeePaymentsService.listForCustomer', () => {
+    it('returns a customer\'s fee payments enriched with fee/product names, newest first', async () => {
+      const customerId = await createCustomer();
+      const feeId = await createApprovedFee({ name: `Registration Fee ${Date.now()}` });
+      const product = await createApprovedProduct({ feeIds: [feeId] });
+
+      await feePaymentsService.recordPayment(
+        customerId,
+        product._id.toString(),
+        feeId,
+        5_000,
+        FeePaymentStatus.PAID,
+        INITIATOR_ID,
+      );
+
+      const history = await feePaymentsService.listForCustomer(customerId);
+
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({
+        productId: product._id.toString(),
+        feeDefinitionId: feeId,
+        amountKobo: 5_000,
+        status: FeePaymentStatus.PAID,
+        recordedBy: INITIATOR_ID,
+      });
+      expect(history[0]!.productName).toBe(product.name);
+      expect(history[0]!.feeName).toBeTruthy();
+    });
+
+    it('returns an empty array for a customer with no fee payments', async () => {
+      const customerId = await createCustomer();
+      await expect(feePaymentsService.listForCustomer(customerId)).resolves.toEqual([]);
+    });
+
+    it('persists accountPaidTo/paymentReference for a PAID record, drops them for a WAIVED one', async () => {
+      const customerId = await createCustomer();
+      const feeId = await createApprovedFee({ name: `Registration Fee ${Date.now()}` });
+      const product = await createApprovedProduct({ feeIds: [feeId] });
+
+      await feePaymentsService.recordPayment(
+        customerId,
+        product._id.toString(),
+        feeId,
+        5_000,
+        FeePaymentStatus.PAID,
+        INITIATOR_ID,
+        'Main Branch Cash Account',
+        'TRX-00219',
+      );
+      const paid = await feePaymentsService.listForCustomer(customerId);
+      expect(paid[0]).toMatchObject({ accountPaidTo: 'Main Branch Cash Account', paymentReference: 'TRX-00219' });
+
+      await feePaymentsService.recordPayment(
+        customerId,
+        product._id.toString(),
+        feeId,
+        5_000,
+        FeePaymentStatus.WAIVED,
+        INITIATOR_ID,
+        'Should be dropped',
+        'Should be dropped',
+      );
+      const waived = await feePaymentsService.listForCustomer(customerId);
+      expect(waived[0]).toMatchObject({ accountPaidTo: null, paymentReference: null, status: FeePaymentStatus.WAIVED });
+    });
+  });
+
+  describe('FeePaymentsService.listAvailableFeesForCustomer', () => {
+    it('reports a PENDING PRE_LOAN fee from an active product that was never recorded', async () => {
+      const customerId = await createCustomer();
+      const feeId = await createApprovedFee({ name: `Membership Fee ${Date.now()}`, value: 2_000 });
+      const product = await createApprovedProduct({ feeIds: [feeId] });
+
+      const available = await feePaymentsService.listAvailableFeesForCustomer(customerId);
+
+      expect(available).toHaveLength(1);
+      expect(available[0]).toMatchObject({
+        productId: product._id.toString(),
+        feeDefinitionId: feeId,
+        amountKobo: 2_000,
+        status: FeePaymentStatus.PENDING,
+        feePaymentId: null,
+        accountPaidTo: null,
+        paymentReference: null,
+      });
+    });
+
+    it('flips to PAID once recorded, carrying the account/reference through', async () => {
+      const customerId = await createCustomer();
+      const feeId = await createApprovedFee({ name: `Registration Fee ${Date.now()}`, value: 3_000 });
+      const product = await createApprovedProduct({ feeIds: [feeId] });
+
+      await feePaymentsService.recordPayment(
+        customerId,
+        product._id.toString(),
+        feeId,
+        3_000,
+        FeePaymentStatus.PAID,
+        INITIATOR_ID,
+        'Main Branch Cash Account',
+        'TRX-00220',
+      );
+
+      const available = await feePaymentsService.listAvailableFeesForCustomer(customerId);
+
+      expect(available).toHaveLength(1);
+      expect(available[0]).toMatchObject({
+        status: FeePaymentStatus.PAID,
+        amountKobo: 3_000,
+        accountPaidTo: 'Main Branch Cash Account',
+        paymentReference: 'TRX-00220',
+      });
+      expect(available[0]!.feePaymentId).toBeTruthy();
+    });
+
+    it('excludes a DURING_LIFECYCLE fee — only PRE_LOAN fees are ever "available" outside a live loan', async () => {
+      const customerId = await createCustomer();
+      const feeId = await createApprovedFee({ name: `Late Fee ${Date.now()}`, timing: FeeTiming.DURING_LIFECYCLE });
+      await createApprovedProduct({ feeIds: [feeId] });
+
+      await expect(feePaymentsService.listAvailableFeesForCustomer(customerId)).resolves.toEqual([]);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EventEmitter2, EventEmitterModule } from '@nestjs/event-emitter';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -381,6 +381,29 @@ describe('WorkflowEngineService', () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('requires a comment when rejecting outright — a maker always sees a recorded reason', async () => {
+      await registerTwoStepChain('GROUP', 'CREATE', true);
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+
+      await expect(
+        service.act({
+          workflowRequestId: request._id.toString(),
+          actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+          action: WorkflowStepAction.REJECTED,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      // untouched — the rejected-without-comment attempt above must not have
+      // gone through
+      const stillPending = await service.getById(request._id.toString());
+      expect(stillPending.status).toBe(WorkflowStatus.PENDING_REVIEW);
+    });
   });
 
   describe('act — approval progression and events', () => {
@@ -437,6 +460,9 @@ describe('WorkflowEngineService', () => {
         entityType: 'GROUP',
         payload: { name: 'Group Z' },
         initiatedBy: 'staff-A',
+        // The actor who took the final APPROVED action (staff-C here) — not
+        // staff-A the maker, and not staff-B who only did the review step.
+        approvedBy: 'staff-C',
       });
     });
 
@@ -655,7 +681,7 @@ describe('WorkflowEngineService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('only a RETURNED_TO_MAKER request can be resubmitted', async () => {
+    it('only a REJECTED or RETURNED_TO_MAKER request can be resubmitted — a still-pending one is rejected', async () => {
       await registerTwoStepChain('GROUP', 'CREATE', true);
       const request = await service.initiate({
         entityType: 'GROUP',
@@ -671,6 +697,173 @@ describe('WorkflowEngineService', () => {
           newPayload: {},
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('a REJECTED request can be resubmitted — always restarts fresh from step 0, even with restartOnReturn: false', async () => {
+      await registerTwoStepChain('GROUP', 'REJECT_RESTART_CREATE', false);
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'REJECT_RESTART_CREATE',
+        payload: { name: 'v0' },
+        initiatedBy: 'staff-A',
+      });
+      const id = request._id.toString();
+
+      // Approved at review, then rejected at the final step — a genuinely
+      // terminal "no", unlike RETURNED.
+      await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+      await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-C', capabilities: [APPROVE_CAP] },
+        action: WorkflowStepAction.REJECTED,
+        comment: 'not eligible',
+      });
+
+      const events: unknown[] = [];
+      eventEmitter.once(WORKFLOW_RESUBMITTED_EVENT, (event: unknown) => events.push(event));
+
+      const resubmitted = await service.resubmit({
+        workflowRequestId: id,
+        actorId: 'staff-A',
+        newPayload: { name: 'v1' },
+      });
+
+      expect(resubmitted.status).toBe(WorkflowStatus.PENDING_REVIEW);
+      expect(resubmitted.currentStepIndex).toBe(0);
+      expect(resubmitted.steps.every((s) => s.actedBy === null)).toBe(true);
+      expect(resubmitted.payloadHistory).toHaveLength(2);
+      expect(resubmitted.payloadHistory[1]?.payload).toEqual({ name: 'v1' });
+      expect(events).toHaveLength(1);
+
+      // The same original reviewer can act again on the fresh cycle.
+      const reReviewed = await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+      expect(reReviewed.currentStepIndex).toBe(1);
+    });
+  });
+
+  describe('updatePendingPayload', () => {
+    it('appends a new payload version without touching steps/currentStepIndex/status', async () => {
+      await registerTwoStepChain('GROUP', 'EDIT_CREATE', true);
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'EDIT_CREATE',
+        payload: { name: 'v0' },
+        initiatedBy: 'staff-A',
+      });
+      const id = request._id.toString();
+
+      const updated = await service.updatePendingPayload({
+        workflowRequestId: id,
+        actorId: 'staff-A',
+        newPayload: { name: 'v1' },
+      });
+
+      expect(updated.status).toBe(WorkflowStatus.PENDING_REVIEW);
+      expect(updated.currentStepIndex).toBe(0);
+      expect(updated.steps.every((s) => s.actedBy === null)).toBe(true);
+      expect(updated.payloadHistory).toHaveLength(2);
+      expect(updated.payloadHistory[1]?.payload).toEqual({ name: 'v1' });
+
+      // still fully actionable afterwards
+      const reviewed = await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+      expect(reviewed.currentStepIndex).toBe(1);
+    });
+
+    it('only the original initiator may edit', async () => {
+      await registerTwoStepChain('GROUP', 'EDIT_CREATE', true);
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'EDIT_CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+
+      await expect(
+        service.updatePendingPayload({
+          workflowRequestId: request._id.toString(),
+          actorId: 'staff-Z',
+          newPayload: {},
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('only a PENDING_REVIEW request can be edited this way — once reviewed, it is rejected', async () => {
+      await registerTwoStepChain('GROUP', 'EDIT_CREATE', true);
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'EDIT_CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      const id = request._id.toString();
+
+      await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+
+      await expect(
+        service.updatePendingPayload({
+          workflowRequestId: id,
+          actorId: 'staff-A',
+          newPayload: {},
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('registerPreApprovalValidator', () => {
+    it('blocks only the final APPROVED transition, and only when registered for the exact entityType/action', async () => {
+      await registerTwoStepChain('GROUP', 'GATED_CREATE', true);
+      let calls = 0;
+      service.registerPreApprovalValidator('GROUP', 'GATED_CREATE', async () => {
+        calls += 1;
+        throw new ConflictException('blocked by domain rule');
+      });
+
+      const request = await service.initiate({
+        entityType: 'GROUP',
+        action: 'GATED_CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      const id = request._id.toString();
+
+      // Review step (not the last one) — validator not consulted, passes through.
+      const reviewed = await service.act({
+        workflowRequestId: id,
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+      expect(reviewed.status).toBe(WorkflowStatus.PENDING_APPROVAL);
+      expect(calls).toBe(0);
+
+      // Final step — validator runs and blocks it; nothing persisted.
+      await expect(
+        service.act({
+          workflowRequestId: id,
+          actor: { staffId: 'staff-C', capabilities: [APPROVE_CAP] },
+          action: WorkflowStepAction.APPROVED,
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(calls).toBe(1);
+
+      const stillPending = await service.getById(id);
+      expect(stillPending.status).toBe(WorkflowStatus.PENDING_APPROVAL);
+      expect(stillPending.currentStepIndex).toBe(1);
     });
   });
 
@@ -738,6 +931,76 @@ describe('WorkflowEngineService', () => {
 
       const pending = await service.getPendingForActor('staff-B', ['cap:unrelated']);
       expect(pending).toEqual([]);
+    });
+  });
+
+  describe('getPendingByEntityType', () => {
+    it("includes the caller's own pending submissions, unlike getPendingForActor", async () => {
+      await registerTwoStepChain('GROUP', 'CREATE', true);
+
+      const ownRequest = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      const othersRequest = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-B',
+      });
+
+      const pending = await service.getPendingByEntityType('GROUP');
+      const pendingIds = pending.map((p) => p._id.toString());
+
+      expect(pendingIds).toEqual(
+        expect.arrayContaining([ownRequest._id.toString(), othersRequest._id.toString()]),
+      );
+    });
+
+    it('excludes other entity types and non-actionable statuses', async () => {
+      await registerTwoStepChain('GROUP', 'CREATE', true);
+      await service.registerChainConfig({
+        entityType: 'LOAN',
+        action: 'APPLY',
+        restartOnReturn: true,
+        steps: [{ order: 0, requiredCapability: APPROVE_CAP }],
+      });
+
+      const groupReq = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      await service.initiate({
+        entityType: 'LOAN',
+        action: 'APPLY',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      const approvedReq = await service.initiate({
+        entityType: 'GROUP',
+        action: 'CREATE',
+        payload: {},
+        initiatedBy: 'staff-A',
+      });
+      await service.act({
+        workflowRequestId: approvedReq._id.toString(),
+        actor: { staffId: 'staff-B', capabilities: [REVIEW_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+      await service.act({
+        workflowRequestId: approvedReq._id.toString(),
+        actor: { staffId: 'staff-C', capabilities: [APPROVE_CAP] },
+        action: WorkflowStepAction.APPROVED,
+      });
+
+      const pending = await service.getPendingByEntityType('GROUP');
+      const pendingIds = pending.map((p) => p._id.toString());
+
+      expect(pendingIds).toEqual([groupReq._id.toString()]);
     });
   });
 

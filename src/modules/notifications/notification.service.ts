@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 
 import type { NotificationConfig } from '../../common/config/configuration';
-import { NotificationTrigger } from '../../common/enums/notification.enums';
+import { NotificationCategory, NotificationTrigger } from '../../common/enums/notification.enums';
 import { NotificationRecipient } from './interfaces/notification-recipient.interface';
 import {
   NOTIFICATION_DISPATCH_QUEUE,
@@ -40,11 +40,29 @@ export class NotificationService {
     sourceEntityId: string,
     recipient: NotificationRecipient,
     payload: Record<string, unknown>,
+    /**
+     * In-app routing/display metadata — optional and additive, so every
+     * pre-existing call site (~20 of them, some on hot paths like login OTP)
+     * is unaffected. Omit entirely for a trigger that shouldn't route
+     * in-app-specific category/branch context (the in-app copy still gets
+     * written — see NotificationDispatchProcessor — just under
+     * `NotificationCategory.GENERAL`, `branchId: null`).
+     */
+    inAppMeta?: { category?: NotificationCategory; branchId?: string | null },
   ): Promise<void> {
     const notificationConfig = this.configService.get<NotificationConfig>('notification');
     const jobId = `${type}:${sourceEntityId}:${recipient.id}`;
 
-    await this.queue.add(type, { type, recipient, payload } satisfies NotificationDispatchJobData, {
+    const jobData: NotificationDispatchJobData = {
+      type,
+      recipient,
+      payload,
+      sourceEntityId,
+      category: inAppMeta?.category ?? NotificationCategory.GENERAL,
+      branchId: inAppMeta?.branchId ?? null,
+    };
+
+    await this.queue.add(type, jobData, {
       jobId,
       attempts: notificationConfig?.maxAttempts,
       backoff: {

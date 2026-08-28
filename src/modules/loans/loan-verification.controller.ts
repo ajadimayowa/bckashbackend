@@ -8,7 +8,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import {
@@ -40,6 +40,11 @@ export class LoanVerificationController {
   @Post(':loanId/members/:customerId/verify')
   @RequireCapability(LOAN_DISBURSEMENT_OPS_CAPABILITY)
   @UseInterceptors(FileInterceptor('liveImage'))
+  @ApiOperation({
+    summary: 'Run pre-disbursement verification for one loan member',
+    description:
+      'Live facial capture vs. the BVN photo, plus a BVN recheck. PASSED clears the member; a failure escalates for human review, never an automatic denial.',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -73,6 +78,10 @@ export class LoanVerificationController {
   // gating initiation above. See LoanVerificationService.resolveEscalation.
   @Post('verifications/:verificationId/resolve')
   @RequireCapability(APPROVE_LOAN)
+  @ApiOperation({
+    summary: 'Resolve an escalated verification',
+    description: 'OVERRIDE_PASS or REJECT_LOAN — Admin/Approver only, requires a note.',
+  })
   resolveEscalation(
     @Param('verificationId') verificationId: string,
     @Body() dto: ResolveEscalationDto,
@@ -88,6 +97,11 @@ export class LoanVerificationController {
 
   @Post(':loanId/check-and-disburse')
   @RequireCapability(LOAN_DISBURSEMENT_OPS_CAPABILITY)
+  @ApiOperation({
+    summary: 'Manually retry the disbursement check',
+    description:
+      'A no-op unless every member has now passed verification — disbursement itself fires automatically once that happens, this exists for retrying after a transient failure.',
+  })
   checkAndDisburse(
     @Param('loanId') loanId: string,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -97,6 +111,10 @@ export class LoanVerificationController {
 
   @Post('member-accounts/:memberLoanAccountId/confirm-cheque-handover')
   @RequireCapability(LOAN_DISBURSEMENT_OPS_CAPABILITY)
+  @ApiOperation({
+    summary: 'Confirm physical cheque handover',
+    description: 'Only meaningful for CHEQUE_PICKUP disbursement channel accounts.',
+  })
   confirmChequeHandover(
     @Param('memberLoanAccountId') memberLoanAccountId: string,
     @CurrentStaffContext() actor: ResolvedStaffContext,

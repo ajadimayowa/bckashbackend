@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 
-import { NotificationTrigger } from '../../common/enums/notification.enums';
+import { NotificationCategory, NotificationTrigger } from '../../common/enums/notification.enums';
 import { NotificationService } from './notification.service';
 
 function fakeConfigService(): ConfigService {
@@ -28,12 +28,40 @@ describe('NotificationService.dispatch', () => {
 
     expect(add).toHaveBeenCalledWith(
       NotificationTrigger.LOAN_RAISED,
-      { type: NotificationTrigger.LOAN_RAISED, recipient, payload: { amountKobo: 1_000 } },
+      {
+        type: NotificationTrigger.LOAN_RAISED,
+        recipient,
+        payload: { amountKobo: 1_000 },
+        sourceEntityId: 'loan-1',
+        category: NotificationCategory.GENERAL,
+        branchId: null,
+      },
       expect.objectContaining({
         jobId: 'LOAN_RAISED:loan-1:cust-1',
         attempts: 5,
         backoff: { type: 'exponential', delay: 5000 },
       }),
+    );
+  });
+
+  it('folds the optional inAppMeta (category/branchId) into the job data', async () => {
+    const add = jest.fn().mockResolvedValue(undefined);
+    const queue = { add } as unknown as Queue;
+    const service = new NotificationService(queue, fakeConfigService());
+    const recipient = { kind: 'STAFF' as const, id: 'staff-1', email: 's@example.com', phone: null };
+
+    await service.dispatch(
+      NotificationTrigger.BRANCH_FUNDING_RECORDED,
+      'funding-1',
+      recipient,
+      { amountKobo: 500 },
+      { category: NotificationCategory.BRANCH_MANAGER, branchId: 'branch-1' },
+    );
+
+    expect(add).toHaveBeenCalledWith(
+      NotificationTrigger.BRANCH_FUNDING_RECORDED,
+      expect.objectContaining({ category: NotificationCategory.BRANCH_MANAGER, branchId: 'branch-1' }),
+      expect.anything(),
     );
   });
 

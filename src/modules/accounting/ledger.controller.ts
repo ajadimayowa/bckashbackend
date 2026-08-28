@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Post, Body, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { ModuleName } from '../../common/enums/identity.enums';
 import { CurrentStaffContext } from '../../platform/rbac/decorators/current-staff-context.decorator';
@@ -35,6 +35,11 @@ export class LedgerController {
   ) {}
 
   @Get('accounts/:accountId/balance')
+  @ApiOperation({
+    summary: 'Get an account balance',
+    description:
+      'Signed per normal-balance convention (ASSET/EXPENSE debit-normal, LIABILITY/EQUITY/INCOME credit-normal). Optionally as-of a date.',
+  })
   async getAccountBalance(
     @Param('accountId') accountId: string,
     @Query('asOfDate') asOfDate?: string,
@@ -47,6 +52,11 @@ export class LedgerController {
   }
 
   @Get('trial-balance')
+  @ApiOperation({
+    summary: 'Get the trial balance',
+    description:
+      'Every account with a balance, confirming total debits equal total credits system-wide.',
+  })
   getTrialBalance(
     @Query('asOfDate') asOfDate?: string,
     @Query('branchId') branchId?: string,
@@ -58,6 +68,10 @@ export class LedgerController {
   }
 
   @Get('accounts/:accountId/entries')
+  @ApiOperation({
+    summary: "Get an account's ledger entries",
+    description: 'Paginated, for reconciliation/audit.',
+  })
   getLedgerEntries(
     @Param('accountId') accountId: string,
     @Query('from') from?: string,
@@ -76,6 +90,11 @@ export class LedgerController {
   }
 
   @Post('manual-entries')
+  @ApiOperation({
+    summary: 'Propose a manual journal entry',
+    description:
+      'Balance-validated before initiation; not posted until a separate Admin/SuperAdmin approves it.',
+  })
   async proposeManualEntry(
     @Body() dto: ProposeManualJournalEntryDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,

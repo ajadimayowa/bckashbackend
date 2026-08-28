@@ -109,7 +109,7 @@ describe('LoanProductsService', () => {
       name: `Product-${Date.now()}-${Math.random()}`,
       interestRate: 1_800,
       interestType: InterestType.REDUCING,
-      tenureOptions: [3, 6, 12],
+      tenureOptions: [14, 30, 60],
       minGroupSize: 3,
       feeIds: [],
       approvalChainSteps: [
@@ -187,6 +187,12 @@ describe('LoanProductsService', () => {
       await expect(
         service.initiateCreation(productDto({ minGroupSize: 2 }), INITIATOR_ID),
       ).rejects.toThrow(/at least 3/);
+    });
+
+    it('rejects a tenureOptions entry below the 14-day floor', async () => {
+      await expect(
+        service.initiateCreation(productDto({ tenureOptions: [13, 30] }), INITIATOR_ID),
+      ).rejects.toThrow(/at least 14 days/);
     });
 
     it('rejects a feeIds entry that does not exist', async () => {
@@ -316,6 +322,13 @@ describe('LoanProductsService', () => {
       await expect(
         service.initiateUpdate(product._id.toString(), { minGroupSize: 1 }, INITIATOR_ID),
       ).rejects.toThrow(/at least 3/);
+    });
+
+    it('rejects an update with a tenureOptions entry below the 14-day floor', async () => {
+      const product = await createApprovedProduct();
+      await expect(
+        service.initiateUpdate(product._id.toString(), { tenureOptions: [7] }, INITIATOR_ID),
+      ).rejects.toThrow(/at least 14 days/);
     });
 
     it(

@@ -14,7 +14,12 @@ import { StaffService } from '../staff.service';
  * the token-invalidation-on-disable mechanism (see PHASE_3_NOTES.md) — every
  * authenticated request does one lightweight DB read here to confirm the
  * token's owner is still ACTIVE, so a disable takes effect on the very next
- * request even if the access token itself hasn't expired yet.
+ * request even if the access token itself hasn't expired yet. That same
+ * read now also returns `userType` (Initiator/Authorizer RBAC — see
+ * StaffUserType's own doc comment), live for the same reason: a userType
+ * change should take effect on the very next request too, not wait out the
+ * access token's lifetime the way `role`/`branchId` (still trusted as-issued
+ * from the JWT payload) do.
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -31,11 +36,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedStaffPrincipal> {
-    const status = await this.staffService.getStatus(payload.sub);
-    if (status !== StaffStatus.ACTIVE) {
+    const current = await this.staffService.getStatusAndUserType(payload.sub);
+    if (!current || current.status !== StaffStatus.ACTIVE) {
       throw new UnauthorizedException('Account is not active');
     }
 
-    return { staffId: payload.sub, role: payload.role, branchId: payload.branchId };
+    return {
+      staffId: payload.sub,
+      role: payload.role,
+      branchId: payload.branchId,
+      userType: current.userType,
+    };
   }
 }

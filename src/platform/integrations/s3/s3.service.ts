@@ -5,7 +5,17 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AwsConfig } from '../../../common/config/configuration';
+import { S3StorageUnavailableException } from './exceptions/s3-storage-unavailable.exception';
 import { S3Adapter, S3UploadResult } from './interfaces/s3-adapter.interface';
+
+function describeS3Error(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const name = 'name' in err ? String((err as { name: unknown }).name) : undefined;
+    const message = 'message' in err ? String((err as { message: unknown }).message) : undefined;
+    return [name, message].filter(Boolean).join(' — ') || 'unknown error';
+  }
+  return 'unknown error';
+}
 
 /**
  * Required bucket setup (infra task outside this codebase — not provisioned
@@ -51,26 +61,38 @@ export class S3Service implements S3Adapter {
   }
 
   async upload(key: string, buffer: Buffer, contentType: string): Promise<S3UploadResult> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: buffer,
-        ContentType: contentType,
-        // No ACL set — bucket is private by default; access is exclusively via signed URLs.
-      }),
-    );
-    return { key };
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: contentType,
+          // No ACL set — bucket is private by default; access is exclusively via signed URLs.
+        }),
+      );
+      return { key };
+    } catch (err) {
+      throw new S3StorageUnavailableException(`upload (bucket "${this.bucket}")`, describeS3Error(err));
+    }
   }
 
   async getSignedReadUrl(key: string, expiresInSeconds?: number): Promise<string> {
-    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
-    return getSignedUrl(this.client, command, {
-      expiresIn: expiresInSeconds ?? this.defaultSignedUrlExpiresInSeconds,
-    });
+    try {
+      const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+      return await getSignedUrl(this.client, command, {
+        expiresIn: expiresInSeconds ?? this.defaultSignedUrlExpiresInSeconds,
+      });
+    } catch (err) {
+      throw new S3StorageUnavailableException(`signed URL generation (bucket "${this.bucket}")`, describeS3Error(err));
+    }
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    try {
+      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    } catch (err) {
+      throw new S3StorageUnavailableException(`delete (bucket "${this.bucket}")`, describeS3Error(err));
+    }
   }
 }

@@ -13,19 +13,25 @@ import { WorkflowStatus, WorkflowStepAction } from '../../common/enums/workflow.
 import { AuditService } from '../audit/audit.service';
 import {
   WORKFLOW_APPROVED_EVENT,
+  WORKFLOW_CANCELLED_EVENT,
+  WORKFLOW_DELETED_EVENT,
   WORKFLOW_REJECTED_EVENT,
   WORKFLOW_RESUBMITTED_EVENT,
   WORKFLOW_RETURNED_EVENT,
   WorkflowApprovedEvent,
+  WorkflowCancelledEvent,
+  WorkflowDeletedEvent,
   WorkflowRejectedEvent,
   WorkflowResubmittedEvent,
   WorkflowReturnedEvent,
 } from './events/workflow-engine.events';
 import {
+  ActingStaff,
   ActOnWorkflowInput,
   InitiateWorkflowInput,
   RegisterChainConfigInput,
   ResubmitWorkflowInput,
+  UpdatePendingPayloadInput,
 } from './interfaces/workflow-engine.interfaces';
 import {
   WorkflowChainConfig,
@@ -42,8 +48,37 @@ const ACTIONABLE_STATUSES: readonly WorkflowStatus[] = [
   WorkflowStatus.PENDING_APPROVAL,
 ];
 
+/**
+ * A domain-specific check that must pass before a request is allowed to
+ * make its *final* transition to APPROVED — throw to block it. Registered
+ * per (entityType, action) via `registerPreApprovalValidator`, called
+ * synchronously (plain await, not the event emitter) right before the
+ * commit, so a thrown exception propagates normally to the approver as an
+ * HTTP error and nothing is persisted. Deliberately NOT wired through
+ * `@nestjs/event-emitter`'s `emitAsync` — that mechanism *logs and
+ * swallows* exceptions thrown inside an `@OnEvent` listener rather than
+ * propagating them (a real, previously-discovered class of "invisible
+ * failure" — see BranchesService's own duplicate-branch-code doc comment
+ * for the first time this bit us), which would make a blocked approval
+ * silently look like it succeeded. `WorkflowEngineService` still has zero
+ * compile-time dependency on any domain module — this is an opaque
+ * function reference a domain module hands in at `onModuleInit`, the exact
+ * same extensibility shape `registerChainConfig` already uses.
+ *
+ * `actor` param added for the Initiator/Authorizer RBAC feature — the acting
+ * approver, exactly as passed to `act()` (see `ActingStaff.role`'s own doc
+ * comment for why `role` is optional there). Backward-compatible: an
+ * existing validator that only reads `request` is unaffected by the extra
+ * argument.
+ */
+export type PreApprovalValidator = (
+  request: WorkflowRequestDocument,
+  actor: ActingStaff,
+) => Promise<void> | void;
+
 @Injectable()
 export class WorkflowEngineService {
+  private readonly preApprovalValidators = new Map<string, PreApprovalValidator>();
   constructor(
     @InjectModel(WorkflowChainConfig.name)
     private readonly chainConfigModel: Model<WorkflowChainConfigDocument>,
@@ -90,6 +125,15 @@ export class WorkflowEngineService {
       );
     }
     return doc;
+  }
+
+  /** See PreApprovalValidator's own doc comment. Called by a domain module at `onModuleInit`, same shape as `registerChainConfig`. */
+  registerPreApprovalValidator(
+    entityType: string,
+    action: string,
+    validator: PreApprovalValidator,
+  ): void {
+    this.preApprovalValidators.set(`${entityType}:${action}`, validator);
   }
 
   /**
@@ -252,8 +296,8 @@ export class WorkflowEngineService {
       );
     }
 
-    if (action === WorkflowStepAction.RETURNED && !comment) {
-      throw new BadRequestException('A comment is required when returning a request to its maker');
+    if ((action === WorkflowStepAction.RETURNED || action === WorkflowStepAction.REJECTED) && !comment) {
+      throw new BadRequestException('A comment is required when rejecting or returning a request');
     }
 
     const totalSteps = current.steps.length;
@@ -266,6 +310,15 @@ export class WorkflowEngineService {
       newStatus = isLastStep
         ? WorkflowStatus.APPROVED
         : this.computeStatus(newStepIndex, totalSteps);
+
+      // Only at the *final* step — an intermediate review passing through
+      // never triggers this (a Manager's "mark as reviewed" is unaffected).
+      if (isLastStep) {
+        const validator = this.preApprovalValidators.get(`${current.entityType}:${current.action}`);
+        if (validator) {
+          await validator(current, actor);
+        }
+      }
     } else if (action === WorkflowStepAction.REJECTED) {
       newStatus = WorkflowStatus.REJECTED;
     } else {
@@ -325,11 +378,14 @@ export class WorkflowEngineService {
         ...eventBase,
         payload: latestPayload?.payload ?? {},
         initiatedBy: updated.initiatedBy,
+        approvedBy: actor.staffId,
       };
       await this.eventEmitter.emitAsync(WORKFLOW_APPROVED_EVENT, approvedEvent);
     } else if (action === WorkflowStepAction.REJECTED) {
+      const latestPayload = updated.payloadHistory[updated.payloadHistory.length - 1];
       const rejectedEvent: WorkflowRejectedEvent = {
         ...eventBase,
+        payload: latestPayload?.payload ?? {},
         rejectedBy: actor.staffId,
         comment,
       };
@@ -347,6 +403,57 @@ export class WorkflowEngineService {
     return updated;
   }
 
+  /**
+   * The maker edits their own proposal while it's still sitting untouched at
+   * PENDING_REVIEW — unlike `resubmit` (only for REJECTED/RETURNED_TO_MAKER,
+   * and always re-enters/restarts the chain), nothing has happened to this
+   * request yet, so there's no chain state to reset: just append the new
+   * payload version, `steps`/`currentStepIndex`/`status` untouched. A
+   * request that's already moved to PENDING_APPROVAL or been RETURNED_TO_MAKER
+   * no longer qualifies — the maker isn't the only one with a stake in it
+   * anymore.
+   */
+  async updatePendingPayload(input: UpdatePendingPayloadInput): Promise<WorkflowRequestDocument> {
+    const { workflowRequestId, actorId, newPayload } = input;
+
+    const current = await this.workflowRequestModel.findById(workflowRequestId).exec();
+    if (!current) {
+      throw new NotFoundException(`WorkflowRequest ${workflowRequestId} not found`);
+    }
+
+    if (actorId !== current.initiatedBy) {
+      throw new ForbiddenException('Only the initiator may edit their own request');
+    }
+
+    if (current.status !== WorkflowStatus.PENDING_REVIEW) {
+      throw new BadRequestException('Only a PENDING_REVIEW request can be edited this way');
+    }
+
+    const updated = await this.workflowRequestModel
+      .findOneAndUpdate(
+        { _id: workflowRequestId, status: WorkflowStatus.PENDING_REVIEW },
+        { $push: { payloadHistory: { payload: newPayload, submittedBy: actorId, submittedAt: new Date() } } },
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new ConflictException(
+        `WorkflowRequest ${workflowRequestId} was concurrently modified — retry the edit`,
+      );
+    }
+
+    await this.auditService.record({
+      actorId,
+      action: 'WORKFLOW_REQUEST_PAYLOAD_EDITED',
+      entityType: 'WORKFLOW_REQUEST',
+      entityId: workflowRequestId,
+      metadata: { priorPayloadVersionIndex: current.payloadHistory.length - 1 },
+    });
+
+    return updated;
+  }
+
   async resubmit(input: ResubmitWorkflowInput): Promise<WorkflowRequestDocument> {
     const { workflowRequestId, actorId, newPayload } = input;
 
@@ -355,8 +462,12 @@ export class WorkflowEngineService {
       throw new NotFoundException(`WorkflowRequest ${workflowRequestId} not found`);
     }
 
-    if (current.status !== WorkflowStatus.RETURNED_TO_MAKER) {
-      throw new BadRequestException('Only a RETURNED_TO_MAKER request can be resubmitted');
+    const isRejected = current.status === WorkflowStatus.REJECTED;
+    const isReturned = current.status === WorkflowStatus.RETURNED_TO_MAKER;
+    if (!isRejected && !isReturned) {
+      throw new BadRequestException(
+        'Only a REJECTED or RETURNED_TO_MAKER request can be resubmitted',
+      );
     }
 
     if (actorId !== current.initiatedBy) {
@@ -386,7 +497,12 @@ export class WorkflowEngineService {
     let newSteps: WorkflowStepRecord[];
     let newStepIndex: number;
 
-    if (chain.restartOnReturn) {
+    // A REJECTED request always restarts from step 0 on resubmission —
+    // unlike RETURNED_TO_MAKER (which may resume mid-chain, per
+    // `chain.restartOnReturn`), REJECTED is a genuinely final "no" from
+    // whoever acted; a corrected resubmission earns a fresh review cycle,
+    // not a silent resume past whichever step rejected it.
+    if (isRejected || chain.restartOnReturn) {
       newSteps = chain.steps
         .slice()
         .sort((a, b) => a.order - b.order)
@@ -418,7 +534,7 @@ export class WorkflowEngineService {
 
     const updated = await this.workflowRequestModel
       .findOneAndUpdate(
-        { _id: workflowRequestId, status: WorkflowStatus.RETURNED_TO_MAKER },
+        { _id: workflowRequestId, status: current.status },
         {
           $set: { steps: newSteps, currentStepIndex: newStepIndex, status: newStatus },
           $push: {
@@ -440,7 +556,7 @@ export class WorkflowEngineService {
       action: 'WORKFLOW_REQUEST_RESUBMITTED',
       entityType: 'WORKFLOW_REQUEST',
       entityId: workflowRequestId,
-      before: { status: WorkflowStatus.RETURNED_TO_MAKER },
+      before: { status: current.status },
       after: { status: newStatus, currentStepIndex: newStepIndex },
     });
 
@@ -455,6 +571,139 @@ export class WorkflowEngineService {
     await this.eventEmitter.emitAsync(WORKFLOW_RESUBMITTED_EVENT, resubmittedEvent);
 
     return updated;
+  }
+
+  /**
+   * The maker withdraws their own not-yet-decided (or already-decided-but-
+   * abandoned) proposal — e.g. a Marketer who raised a Customer/Group
+   * they've realized was a mistake, before waiting on someone else to
+   * reject it. Only the original `initiatedBy` may call this, and only
+   * while the request hasn't reached its own terminal "someone else
+   * decided" outcome (APPROVED, or already CANCELLED). Deliberately no
+   * event is emitted — unlike REJECTED/APPROVED, a cancelled request never
+   * had (nor gets) a domain entity for some other module to react to; a
+   * caller that needs to clean up its own side (e.g. CustomerService
+   * deleting the Customer document itself) does that around this call.
+   */
+  async cancel(input: { workflowRequestId: string; actorId: string }): Promise<WorkflowRequestDocument> {
+    const { workflowRequestId, actorId } = input;
+
+    const current = await this.workflowRequestModel.findById(workflowRequestId).exec();
+    if (!current) {
+      throw new NotFoundException(`WorkflowRequest ${workflowRequestId} not found`);
+    }
+
+    if (actorId !== current.initiatedBy) {
+      throw new ForbiddenException('Only the initiator may cancel their own request');
+    }
+
+    if (current.status === WorkflowStatus.APPROVED) {
+      throw new BadRequestException('An already-approved request cannot be cancelled');
+    }
+    if (current.status === WorkflowStatus.CANCELLED) {
+      throw new ConflictException(`WorkflowRequest ${workflowRequestId} has already been cancelled`);
+    }
+
+    const updated = await this.workflowRequestModel
+      .findOneAndUpdate(
+        { _id: workflowRequestId, status: current.status },
+        { $set: { status: WorkflowStatus.CANCELLED } },
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new ConflictException(
+        `WorkflowRequest ${workflowRequestId} was concurrently modified — retry the cancellation`,
+      );
+    }
+
+    await this.auditService.record({
+      actorId,
+      action: 'WORKFLOW_REQUEST_CANCELLED',
+      entityType: 'WORKFLOW_REQUEST',
+      entityId: workflowRequestId,
+      before: { status: current.status },
+      after: { status: WorkflowStatus.CANCELLED },
+    });
+
+    const latestPayload = updated.payloadHistory[updated.payloadHistory.length - 1];
+    const cancelledEvent: WorkflowCancelledEvent = {
+      workflowRequestId,
+      entityType: updated.entityType,
+      entityId: updated.entityId,
+      action: updated.action,
+      branchId: updated.branchId,
+      payload: latestPayload?.payload ?? {},
+      cancelledBy: actorId,
+    };
+    await this.eventEmitter.emitAsync(WORKFLOW_CANCELLED_EVENT, cancelledEvent);
+
+    return updated;
+  }
+
+  /**
+   * The maker permanently removes their own request — unlike `cancel`
+   * (which keeps a CANCELLED record around, e.g. so CustomerService can
+   * silence a pending request tied to a Customer it's deleting without
+   * losing that Customer's own audit trail), this is a genuine hard
+   * delete, for entity types where the request itself *is* the record
+   * (e.g. GROUP/CREATE — no domain document exists until approval, see
+   * WorkflowEntityType.GROUP's own doc comment) and a maker withdrawing a
+   * mistaken proposal expects it to just be gone. Deliberately narrower
+   * than `cancel`: only PENDING_REVIEW (nobody has acted on it yet) or
+   * REJECTED (a reviewer's final "no") — once a request has advanced to
+   * PENDING_APPROVAL or been RETURNED_TO_MAKER, someone has already put
+   * work into it and it's no longer the maker's alone to erase.
+   */
+  async deleteRequest(input: { workflowRequestId: string; actorId: string }): Promise<void> {
+    const { workflowRequestId, actorId } = input;
+
+    const current = await this.workflowRequestModel.findById(workflowRequestId).exec();
+    if (!current) {
+      throw new NotFoundException(`WorkflowRequest ${workflowRequestId} not found`);
+    }
+
+    if (actorId !== current.initiatedBy) {
+      throw new ForbiddenException('Only the initiator may delete their own request');
+    }
+
+    if (current.status !== WorkflowStatus.PENDING_REVIEW && current.status !== WorkflowStatus.REJECTED) {
+      throw new BadRequestException(
+        'Only a PENDING_REVIEW or REJECTED request can be deleted',
+      );
+    }
+
+    const deleted = await this.workflowRequestModel
+      .findOneAndDelete({ _id: workflowRequestId, status: current.status })
+      .exec();
+    if (!deleted) {
+      throw new ConflictException(
+        `WorkflowRequest ${workflowRequestId} was concurrently modified — retry the deletion`,
+      );
+    }
+
+    await this.auditService.record({
+      actorId,
+      action: 'WORKFLOW_REQUEST_DELETED',
+      entityType: 'WORKFLOW_REQUEST',
+      entityId: workflowRequestId,
+      before: { status: current.status, entityType: current.entityType, action: current.action },
+    });
+
+    // `current` (captured before the delete above) is the only source left
+    // for `payload` — the document itself is gone.
+    const latestPayload = current.payloadHistory[current.payloadHistory.length - 1];
+    const deletedEvent: WorkflowDeletedEvent = {
+      workflowRequestId,
+      entityType: current.entityType,
+      entityId: current.entityId,
+      action: current.action,
+      branchId: current.branchId,
+      payload: latestPayload?.payload ?? {},
+      deletedBy: actorId,
+    };
+    await this.eventEmitter.emitAsync(WORKFLOW_DELETED_EVENT, deletedEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -494,6 +743,61 @@ export class WorkflowEngineService {
   /** Full timeline of WorkflowRequests raised against one entity, oldest first. */
   async getHistory(entityType: string, entityId: string): Promise<WorkflowRequestDocument[]> {
     return this.workflowRequestModel.find({ entityType, entityId }).sort({ createdAt: 1 }).exec();
+  }
+
+  /**
+   * Same as `getHistory`, batched across many entities of the same type in
+   * one query — for a caller building a list where every row needs its own
+   * "is there a pending request, and what step is it on" answer (e.g. every
+   * repayment on a Loan Detail page) without an N+1 `getHistory` call per
+   * row. Returns every WorkflowRequest for every id given, unsorted within
+   * an entity's own group — a caller that needs "most recent" should still
+   * pick the max by `createdAt` itself, same as a single-entity `getHistory`
+   * result would require.
+   */
+  async getHistoryForEntities(
+    entityType: string,
+    entityIds: string[],
+  ): Promise<WorkflowRequestDocument[]> {
+    if (entityIds.length === 0) {
+      return [];
+    }
+    return this.workflowRequestModel
+      .find({ entityType, entityId: { $in: [...new Set(entityIds)] } })
+      .sort({ createdAt: 1 })
+      .exec();
+  }
+
+  /**
+   * Every still-pending WorkflowRequest for one entity type, regardless of
+   * who can act on it — unlike `getPendingForActor`, this deliberately
+   * *doesn't* exclude the caller's own submissions. Exists so a maker who
+   * just proposed something (e.g. a new LoanProduct, which doesn't exist as
+   * a real entity yet — see `entityId`'s own doc comment) can see it's
+   * genuinely pending rather than concluding it silently vanished; the
+   * frontend is expected to hide the actual approve/reject action for
+   * entries the viewer initiated, same rule `act()` enforces server-side.
+   */
+  async getPendingByEntityType(entityType: string): Promise<WorkflowRequestDocument[]> {
+    return this.workflowRequestModel
+      .find({ entityType, status: { $in: ACTIONABLE_STATUSES } })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  /**
+   * Every REJECTED WorkflowRequest for one entity type — the "Rejected" tab
+   * counterpart to `getPendingByEntityType` above. A rejected CREATE never
+   * persists a domain entity (see LoanProduct's own doc comment on
+   * REJECTED), so this is the *only* place that history is visible at all
+   * once a request leaves PENDING_*; `WorkflowRequestSummaryDto.steps`
+   * carries who rejected it, when, and their required comment.
+   */
+  async getRejectedByEntityType(entityType: string): Promise<WorkflowRequestDocument[]> {
+    return this.workflowRequestModel
+      .find({ entityType, status: WorkflowStatus.REJECTED })
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   /**

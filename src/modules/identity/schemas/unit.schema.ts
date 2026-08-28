@@ -13,6 +13,9 @@ export class Unit {
 
   @Prop({ type: Boolean, required: true, default: true })
   active!: boolean;
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const UnitSchema = SchemaFactory.createForClass(Unit);

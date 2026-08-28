@@ -12,8 +12,9 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 
+import { StaffRole } from '../../common/enums/identity.enums';
 import { MemberLoanAccountStatus } from '../../common/enums/loan.enums';
-import { RepaymentStatus } from '../../common/enums/repayment.enums';
+import { EarlyLiquidationStatus, RepaymentStatus } from '../../common/enums/repayment.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { AuditService } from '../../platform/audit/audit.service';
 import { approveCapability, reviewCapability } from '../../platform/rbac/constants/capabilities';
@@ -55,8 +56,13 @@ import {
   NOTIFICATION_PORT,
   NotificationPort,
 } from '../loans/interfaces/notification-port.interface';
+import { LoansService } from '../loans/loans.service';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { REPAYMENT_APPLIED_EVENT, RepaymentAppliedEvent } from './events/repayments.events';
+import {
+  EarlyLiquidationRequest,
+  EarlyLiquidationRequestDocument,
+} from './schemas/early-liquidation-request.schema';
 import {
   DisputeDetails,
   RepaymentRecord,
@@ -84,6 +90,13 @@ export class RepaymentsService implements OnModuleInit {
     @InjectModel(Loan.name) private readonly loanModel: Model<LoanDocument>,
     @InjectModel(BranchBankAccount.name)
     private readonly branchBankAccountModel: Model<BranchBankAccountDocument>,
+    // Only ever read here (never written) — to widen the record-time
+    // overpayment cap for a repayment settling an approved early
+    // liquidation, whose totalPayableKobo is deliberately greater than the
+    // account's own outstandingBalanceKobo (it includes the liquidation
+    // fee). See recordRepayment's own comment.
+    @InjectModel(EarlyLiquidationRequest.name)
+    private readonly earlyLiquidationRequestModel: Model<EarlyLiquidationRequestDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly workflowEngineService: WorkflowEngineService,
     private readonly auditService: AuditService,
@@ -92,6 +105,12 @@ export class RepaymentsService implements OnModuleInit {
     @Inject(S3_ADAPTER) private readonly s3Adapter: S3Adapter,
     // Phase 11 retrofit — see raiseDispute's own comment and PHASE_11_NOTES.md.
     @Inject(NOTIFICATION_PORT) private readonly notificationPort: NotificationPort,
+    // Cross-module service injection (not just raw model access, unlike
+    // memberLoanAccountModel/loanModel above) — see LoansService.
+    // syncCompletionStatus's own doc comment. Safe: RepaymentsModule already
+    // imports LoansModule (see LoanDetailService in this same module), and
+    // LoansModule never imports back.
+    private readonly loansService: LoansService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -133,6 +152,40 @@ export class RepaymentsService implements OnModuleInit {
     if (account.status !== MemberLoanAccountStatus.ACTIVE) {
       throw new ConflictException(
         `MemberLoanAccount ${dto.memberLoanAccountId} is not ACTIVE (status: ${account.status}) — cannot record a repayment against it`,
+      );
+    }
+
+    // Rejected outright now, not just capped-and-flagged — a marketer
+    // recording a repayment must never be able to enter more than what's
+    // actually still owed on this specific member's account (not the loan's
+    // aggregate outstandingBalanceKobo — see LoanDetailBorrower's own
+    // per-member figure on the frontend, same thing this checks against).
+    // `applyToBalance`'s own Math.min cap further down the pipeline stays as
+    // is — that one's a different concern (reconciling two still-pending
+    // repayments raised concurrently against the same account, only
+    // resolvable once one of them is actually approved), not a substitute
+    // for catching the obvious case at record time.
+    //
+    // Exception: an approved-but-not-yet-completed EarlyLiquidationRequest
+    // against this account legitimately raises the ceiling to its own
+    // totalPayableKobo (outstandingBalanceKobo + the liquidation fee — see
+    // EarlyLiquidationService.initiateEarlyLiquidation) — the whole point of
+    // settling one is paying more than the plain outstanding balance. The
+    // repayment is only linked to the liquidation request *after* it's
+    // recorded (EarlyLiquidationService.linkRepaymentToLiquidation), so this
+    // can't key off the repayment itself — it looks up the account's
+    // current APPROVED liquidation request directly instead.
+    const outstandingBalanceKobo = account.outstandingBalanceKobo ?? 0;
+    let maxAllowedKobo = outstandingBalanceKobo;
+    const approvedLiquidation = await this.earlyLiquidationRequestModel
+      .findOne({ memberLoanAccountId: account._id, status: EarlyLiquidationStatus.APPROVED })
+      .exec();
+    if (approvedLiquidation && approvedLiquidation.totalPayableKobo > maxAllowedKobo) {
+      maxAllowedKobo = approvedLiquidation.totalPayableKobo;
+    }
+    if (dto.amountKobo > maxAllowedKobo) {
+      throw new BadRequestException(
+        `Amount can't be greater than outstanding balance (₦${(maxAllowedKobo / 100).toLocaleString('en-NG')})`,
       );
     }
 
@@ -186,6 +239,23 @@ export class RepaymentsService implements OnModuleInit {
       branchId: loan.branchId.toString(),
       entityId: created._id.toString(),
     });
+
+    // Tells the branch's manager (the review step's actor) a repayment is
+    // waiting on them — otherwise it only surfaces once they happen to check
+    // the pending queue themselves. Best-effort: a notification failure here
+    // shouldn't roll back an already-recorded repayment/workflow request.
+    await this.notificationPort
+      .sendRepaymentSubmittedForReview({
+        repaymentRecordId: created._id.toString(),
+        branchId: loan.branchId.toString(),
+        recordedBy,
+        amountKobo: dto.amountKobo,
+      })
+      .catch((error) =>
+        this.logger.warn(
+          `Failed to notify branch manager of repayment ${created._id.toString()}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
 
     return { record: created, workflowRequest };
   }
@@ -275,6 +345,12 @@ export class RepaymentsService implements OnModuleInit {
     const session = await this.connection.startSession();
     let applied = false;
     let postingParams: { cappedAmount: number; branchId: string } | null = null;
+    // Set only when this repayment's decrement brings the account's own
+    // balance to exactly 0 — the loan-level completion resync (below,
+    // post-commit, same "not inside the transaction" reasoning as ledger
+    // posting) is only ever worth running when something CLOSED-relevant
+    // just changed.
+    let closedAccountLoanId: string | null = null;
     try {
       await session.withTransaction(async () => {
         const guarded = await this.repaymentRecordModel
@@ -339,6 +415,7 @@ export class RepaymentsService implements OnModuleInit {
               { session },
             )
             .exec();
+          closedAccountLoanId = guarded.loanId.toString();
         }
 
         // Ledger posting deliberately happens AFTER this transaction commits
@@ -395,6 +472,14 @@ export class RepaymentsService implements OnModuleInit {
       await this.eventEmitter.emitAsync(REPAYMENT_APPLIED_EVENT, {
         repaymentRecordId: repaymentId,
       } satisfies RepaymentAppliedEvent);
+
+      if (closedAccountLoanId) {
+        await this.loansService.syncCompletionStatus(closedAccountLoanId).catch((error) => {
+          this.logger.error(
+            `Failed to resync completion status for loan ${closedAccountLoanId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      }
     }
   }
 
@@ -406,6 +491,7 @@ export class RepaymentsService implements OnModuleInit {
    */
   private async reverseBalance(repaymentId: string): Promise<void> {
     const session = await this.connection.startSession();
+    let reopenedAccountLoanId: string | null = null;
     try {
       await session.withTransaction(async () => {
         const guarded = await this.repaymentRecordModel
@@ -455,10 +541,24 @@ export class RepaymentsService implements OnModuleInit {
               { session },
             )
             .exec();
+          reopenedAccountLoanId = guarded.loanId.toString();
         }
       });
     } finally {
       await session.endSession();
+    }
+
+    // Post-commit, same "not inside the transaction" reasoning as
+    // applyToBalance's own loan-completion resync — a Loan this reopened
+    // account belongs to may have been marked CLOSED and now needs to go
+    // back to DISBURSED (see LoansService.syncCompletionStatus's own doc
+    // comment).
+    if (reopenedAccountLoanId) {
+      await this.loansService.syncCompletionStatus(reopenedAccountLoanId).catch((error) => {
+        this.logger.error(
+          `Failed to resync completion status for loan ${reopenedAccountLoanId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     }
   }
 
@@ -642,6 +742,52 @@ export class RepaymentsService implements OnModuleInit {
       throw new NotFoundException(`RepaymentRecord ${repaymentId} not found`);
     }
     return record;
+  }
+
+  /** Every RepaymentRecord raised against a loan, across every member, oldest first — used by the Loan Manager detail view to build a real payment history/schedule-allocation view. */
+  async listForLoan(loanId: string): Promise<RepaymentRecordDocument[]> {
+    return this.repaymentRecordModel
+      .find({ loanId: new Types.ObjectId(loanId) })
+      .sort({ paymentDate: 1 })
+      .exec();
+  }
+
+  /**
+   * Row-level scoping mirrors LoansService.listForActor exactly: ADMIN/
+   * SUPERADMIN/APPROVER see every repayment (optionally narrowed by
+   * `filter.branchId`/`filter.loanId`/`filter.status`); a MANAGER only ever
+   * sees their own branch's repayments; anyone else (MARKETER) only sees
+   * repayments they themselves recorded.
+   */
+  async listForActor(
+    filter: { branchId?: string; loanId?: string; status?: RepaymentStatus },
+    viewer: { staffId: string; role: StaffRole; branchId?: string },
+  ): Promise<RepaymentRecordDocument[]> {
+    const query: Record<string, unknown> = {};
+
+    if (viewer.role === StaffRole.MANAGER) {
+      if (!viewer.branchId) {
+        return [];
+      }
+      query.branchId = new Types.ObjectId(viewer.branchId);
+    } else if (
+      viewer.role !== StaffRole.ADMIN &&
+      viewer.role !== StaffRole.SUPERADMIN &&
+      viewer.role !== StaffRole.APPROVER
+    ) {
+      query.recordedBy = new Types.ObjectId(viewer.staffId);
+    } else if (filter.branchId) {
+      query.branchId = new Types.ObjectId(filter.branchId);
+    }
+
+    if (filter.loanId) {
+      query.loanId = new Types.ObjectId(filter.loanId);
+    }
+    if (filter.status) {
+      query.status = filter.status;
+    }
+
+    return this.repaymentRecordModel.find(query).sort({ paymentDate: -1 }).exec();
   }
 
   /**

@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 
 import { CreateBranchBankAccountDto } from './dto/create-branch-bank-account.dto';
 import { UpdateBranchBankAccountDto } from './dto/update-branch-bank-account.dto';
@@ -8,6 +8,14 @@ import { BranchBankAccount, BranchBankAccountDocument } from './schemas/branch-b
 
 const DUPLICATE_KEY_ERROR_CODE = 11000;
 
+/**
+ * A branch may have many bank accounts, but at most one is ever `active` at
+ * a time — that's the one `BranchFundingService.recordFunding` requires a
+ * funding record to target (see its own doc comment). Activating one
+ * deactivates whichever other account currently holds that spot, in the
+ * same write where possible; nothing here ever *requires* an active account
+ * to exist (a branch can legitimately have zero, right after creation).
+ */
 @Injectable()
 export class BranchBankAccountsService {
   constructor(
@@ -16,22 +24,36 @@ export class BranchBankAccountsService {
   ) {}
 
   async create(dto: CreateBranchBankAccountDto): Promise<BranchBankAccountDocument> {
+    const branchObjectId = new Types.ObjectId(dto.branchId);
+    const existingCount = await this.bankAccountModel.countDocuments({ branchId: branchObjectId }).exec();
+    // The branch's first account has nothing to be exclusive *of* — make it
+    // active automatically so funding isn't blocked on a separate "now make
+    // one active" step immediately after adding the only account that could
+    // possibly hold that spot.
+    const shouldBeActive = dto.active ?? existingCount === 0;
+
+    if (shouldBeActive) {
+      await this.deactivateOthers(branchObjectId);
+    }
+
     try {
       return await this.bankAccountModel.create({
-        branchId: dto.branchId,
+        branchId: branchObjectId,
         bankName: dto.bankName,
         accountNumber: dto.accountNumber,
         accountName: dto.accountName,
         purpose: dto.purpose,
-        active: true,
+        active: shouldBeActive,
       });
     } catch (err) {
       this.rethrowDuplicateKeyAsConflict(err, dto.bankName, dto.accountNumber);
     }
   }
 
-  async findAll(branchId?: string): Promise<BranchBankAccountDocument[]> {
-    const filter = branchId ? { branchId } : {};
+  async findAll(branchId?: string, active?: boolean): Promise<BranchBankAccountDocument[]> {
+    const filter: Record<string, unknown> = {};
+    if (branchId) filter.branchId = new Types.ObjectId(branchId);
+    if (active !== undefined) filter.active = active;
     return this.bankAccountModel.find(filter).sort({ createdAt: -1 }).exec();
   }
 
@@ -45,15 +67,20 @@ export class BranchBankAccountsService {
 
   /**
    * No delete endpoint — retiring an account is `PATCH { active: false }`.
-   * See PHASE_4_NOTES.md for why a hard delete (even a conditional one) isn't
-   * built in this phase.
+   * See PHASE_4_NOTES.md for why a hard delete (even a conditional one)
+   * isn't built in this phase. Setting `active: true` deactivates whichever
+   * other account for the same branch currently holds that spot first.
    */
   async update(id: string, dto: UpdateBranchBankAccountDto): Promise<BranchBankAccountDocument> {
+    const existing = await this.findById(id);
+
+    if (dto.active === true) {
+      await this.deactivateOthers(existing.branchId, existing._id);
+    }
+
     let account: BranchBankAccountDocument | null;
     try {
-      account = await this.bankAccountModel
-        .findByIdAndUpdate(id, { $set: dto }, { new: true })
-        .exec();
+      account = await this.bankAccountModel.findByIdAndUpdate(id, { $set: dto }, { new: true }).exec();
     } catch (err) {
       this.rethrowDuplicateKeyAsConflict(err, dto.bankName, dto.accountNumber);
     }
@@ -61,6 +88,19 @@ export class BranchBankAccountsService {
       throw new NotFoundException(`BranchBankAccount ${id} not found`);
     }
     return account;
+  }
+
+  /** The branch's currently-active account, if any — what BranchFundingService validates a funding record's bankAccountId against. */
+  async findActiveForBranch(branchId: string): Promise<BranchBankAccountDocument | null> {
+    return this.bankAccountModel.findOne({ branchId: new Types.ObjectId(branchId), active: true }).exec();
+  }
+
+  private async deactivateOthers(branchId: Types.ObjectId, excludeId?: Types.ObjectId): Promise<void> {
+    const filter: Record<string, unknown> = { branchId, active: true };
+    if (excludeId) {
+      filter._id = { $ne: excludeId };
+    }
+    await this.bankAccountModel.updateMany(filter, { $set: { active: false } }).exec();
   }
 
   /**

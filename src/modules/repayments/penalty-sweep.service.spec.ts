@@ -6,6 +6,7 @@ import {
   PenaltyFrequency,
   PenaltyPercentageBasis,
 } from '../../common/enums/loan-product.enums';
+import { DisbursementChannel } from '../../common/enums/loan.enums';
 import { EarlyLiquidationStatus } from '../../common/enums/repayment.enums';
 import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { approveCapability } from '../../platform/rbac/constants/capabilities';
@@ -347,6 +348,92 @@ describe('PenaltySweepService', () => {
       const requestAfter = await ctx.earlyLiquidationService.findByIdOrThrow(requestId);
       expect(requestAfter.totalPayableKobo).toBe(requestBefore.totalPayableKobo);
       expect(requestAfter.status).toBe(EarlyLiquidationStatus.APPROVED);
+    });
+  });
+
+  describe('CHEQUE_PICKUP penalty grace buffer', () => {
+    it('does not charge until daysLate exceeds gracePeriodDays + the 6-day cheque-pickup buffer', async () => {
+      const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx, {
+        disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        productOverrides: {
+          penaltyRule: {
+            calcType: FeeCalcType.FIXED,
+            value: 1_500,
+            gracePeriodDays: 0,
+            frequency: PenaltyFrequency.ONE_TIME,
+          },
+        },
+      });
+      const accountId = memberLoanAccountIds[0]!;
+      await setFirstInstallmentDueDate(accountId, FIXED_DUE_DATE);
+
+      // daysLate=6 <= effectiveGrace(0 + 6 buffer) -> still no charge.
+      const stillWithinBuffer = await ctx.penaltySweepService.runDailySweep(referenceDateAt(6));
+      expect(stillWithinBuffer.penaltyChargesApplied).toBe(0);
+      expect(
+        await ctx.penaltyChargeModel.countDocuments({
+          memberLoanAccountId: new Types.ObjectId(accountId),
+        }),
+      ).toBe(0);
+
+      // daysLate=7 > effectiveGrace(6) -> charges now.
+      const pastBuffer = await ctx.penaltySweepService.runDailySweep(referenceDateAt(7));
+      expect(pastBuffer.penaltyChargesApplied).toBe(1);
+
+      const charges = await ctx.penaltyChargeModel
+        .find({ memberLoanAccountId: new Types.ObjectId(accountId) })
+        .exec();
+      expect(charges).toHaveLength(1);
+      expect(charges[0]!.daysLateAtApplication).toBe(7);
+    });
+
+    it('a TRANSFER account on the same product/grace gets no buffer — charges as soon as daysLate exceeds the plain gracePeriodDays', async () => {
+      const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx, {
+        disbursementChannel: DisbursementChannel.TRANSFER,
+        productOverrides: {
+          penaltyRule: {
+            calcType: FeeCalcType.FIXED,
+            value: 1_500,
+            gracePeriodDays: 0,
+            frequency: PenaltyFrequency.ONE_TIME,
+          },
+        },
+      });
+      const accountId = memberLoanAccountIds[0]!;
+      await setFirstInstallmentDueDate(accountId, FIXED_DUE_DATE);
+
+      const result = await ctx.penaltySweepService.runDailySweep(referenceDateAt(1)); // daysLate=1 > 0
+      expect(result.penaltyChargesApplied).toBe(1);
+    });
+
+    it('RECURRING periodIndex for a CHEQUE_PICKUP account counts from the buffered grace boundary, not the raw product grace', async () => {
+      const { memberLoanAccountIds } = await raiseApproveVerifyAndDisburseLoan(ctx, {
+        disbursementChannel: DisbursementChannel.CHEQUE_PICKUP,
+        memberPrincipalKobo: 400_000,
+        productOverrides: {
+          penaltyRule: {
+            calcType: FeeCalcType.PERCENTAGE,
+            value: 500,
+            percentageOf: PenaltyPercentageBasis.PRINCIPAL,
+            gracePeriodDays: 0,
+            frequency: PenaltyFrequency.RECURRING,
+            recurrenceIntervalDays: 7,
+          },
+        },
+      });
+      const accountId = memberLoanAccountIds[0]!;
+      await setFirstInstallmentDueDate(accountId, FIXED_DUE_DATE);
+
+      // effectiveGrace = 6. daysLate=7 -> 1 day past effective grace -> period 0.
+      await ctx.penaltySweepService.runDailySweep(referenceDateAt(7));
+      // daysLate=14 -> 8 days past effective grace -> floor(8/7) = period 1.
+      await ctx.penaltySweepService.runDailySweep(referenceDateAt(14));
+
+      const charges = await ctx.penaltyChargeModel
+        .find({ memberLoanAccountId: new Types.ObjectId(accountId) })
+        .sort({ periodIndex: 1 })
+        .exec();
+      expect(charges.map((c) => c.periodIndex)).toEqual([0, 1]);
     });
   });
 

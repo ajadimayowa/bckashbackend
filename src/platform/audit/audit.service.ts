@@ -50,4 +50,16 @@ export class AuditService {
   async findByActor(actorId: string): Promise<AuditLogDocument[]> {
     return this.auditLogModel.find({ actorId }).sort({ timestamp: -1 }).exec();
   }
+
+  /**
+   * Entries recorded against some *other* entityType that nonetheless carry
+   * this branch's id in `metadata.branchId` — e.g. BranchFundingService
+   * records BRANCH_FUNDING_VERIFIED/REJECTED under `entityType:
+   * 'BRANCH_FUNDING'`, `entityId: <fundingId>`, not under `'BRANCH'`, so
+   * `findByEntity('BRANCH', branchId)` alone would miss them. Used by
+   * BranchesService.getActivity to assemble one merged branch timeline.
+   */
+  async findByBranchMetadata(branchId: string): Promise<AuditLogDocument[]> {
+    return this.auditLogModel.find({ 'metadata.branchId': branchId }).sort({ timestamp: 1 }).exec();
+  }
 }

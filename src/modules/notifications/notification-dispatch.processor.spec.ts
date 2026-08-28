@@ -3,8 +3,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Job } from 'bullmq';
 import { Model } from 'mongoose';
 
-import { NotificationChannel, NotificationTrigger } from '../../common/enums/notification.enums';
+import { NotificationCategory, NotificationChannel, NotificationTrigger } from '../../common/enums/notification.enums';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
+import { NotificationInboxService } from './notification-inbox.service';
 import { NotificationDispatchProcessor } from './notification-dispatch.processor';
 import { NotificationDispatchJobData } from './notification-dispatch.queue';
 import {
@@ -15,11 +16,17 @@ import {
 import { NotificationTemplateRegistry } from './templates/notification-template-registry.service';
 
 function fakeJob(
-  data: NotificationDispatchJobData,
+  data: Partial<NotificationDispatchJobData> & Pick<NotificationDispatchJobData, 'type' | 'recipient' | 'payload'>,
   overrides: Partial<{ attemptsMade: number; attempts: number }> = {},
 ): Job<NotificationDispatchJobData> {
+  const fullData: NotificationDispatchJobData = {
+    sourceEntityId: 'src-1',
+    category: NotificationCategory.GENERAL,
+    branchId: null,
+    ...data,
+  };
   return {
-    data,
+    data: fullData,
     attemptsMade: overrides.attemptsMade ?? 1,
     opts: { attempts: overrides.attempts ?? 5 },
   } as unknown as Job<NotificationDispatchJobData>;
@@ -35,6 +42,7 @@ describe('NotificationDispatchProcessor', () => {
   // method signature.
   let emailAdapter: { send: jest.Mock };
   let smsAdapter: { send: jest.Mock };
+  let notificationInboxService: { persistCopies: jest.Mock };
   let processor: NotificationDispatchProcessor;
 
   beforeAll(async () => {
@@ -54,10 +62,16 @@ describe('NotificationDispatchProcessor', () => {
   beforeEach(() => {
     emailAdapter = { send: jest.fn() };
     smsAdapter = { send: jest.fn() };
+    // A bare mock, not a real NotificationInboxService — the in-app persist
+    // step is exercised by NotificationInboxService's own spec; this
+    // processor's tests only need to know it never affects email/SMS
+    // outcomes either way (see the dedicated test below).
+    notificationInboxService = { persistCopies: jest.fn().mockResolvedValue(undefined) };
     processor = new NotificationDispatchProcessor(
       emailAdapter,
       smsAdapter,
       moduleRef.get(NotificationTemplateRegistry),
+      notificationInboxService as unknown as NotificationInboxService,
       deadLetterModel,
     );
   });
@@ -84,6 +98,48 @@ describe('NotificationDispatchProcessor', () => {
     await expect(processor.process(job)).resolves.toBeUndefined();
     expect(emailAdapter.send).not.toHaveBeenCalled();
     expect(smsAdapter.send).toHaveBeenCalledWith('2348012345678', expect.any(String));
+  });
+
+  it('persists an in-app copy alongside the email/SMS legs, keyed off sourceEntityId/category/branchId', async () => {
+    emailAdapter.send.mockResolvedValue({ success: true });
+    smsAdapter.send.mockResolvedValue({ success: true, messageId: 'sms-1' });
+
+    const job = fakeJob({
+      type: NotificationTrigger.BRANCH_FUNDING_RECORDED,
+      recipient: { kind: 'STAFF', id: 'staff-1', email: 'm@example.com', phone: '2348012345678' },
+      payload: { branchName: 'Ikeja Branch', amountKobo: 500_000 },
+      sourceEntityId: 'funding-1',
+      category: NotificationCategory.BRANCH_MANAGER,
+      branchId: 'branch-1',
+    });
+
+    await processor.process(job);
+
+    expect(notificationInboxService.persistCopies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: NotificationTrigger.BRANCH_FUNDING_RECORDED,
+        sourceEntityId: 'funding-1',
+        category: NotificationCategory.BRANCH_MANAGER,
+        branchId: 'branch-1',
+        primaryRecipientStaffId: 'staff-1',
+      }),
+    );
+  });
+
+  it('a failure persisting the in-app copy never blocks the email/SMS legs', async () => {
+    emailAdapter.send.mockResolvedValue({ success: true });
+    smsAdapter.send.mockResolvedValue({ success: true, messageId: 'sms-1' });
+    notificationInboxService.persistCopies.mockRejectedValue(new Error('db down'));
+
+    const job = fakeJob({
+      type: NotificationTrigger.LOAN_RAISED,
+      recipient: { kind: 'CUSTOMER', id: 'cust-6', email: 'c@example.com', phone: '2348012345678' },
+      payload: {},
+    });
+
+    await expect(processor.process(job)).resolves.toBeUndefined();
+    expect(emailAdapter.send).toHaveBeenCalled();
+    expect(smsAdapter.send).toHaveBeenCalled();
   });
 
   it('logs a warning and resolves (no retry) when neither email nor phone is available', async () => {

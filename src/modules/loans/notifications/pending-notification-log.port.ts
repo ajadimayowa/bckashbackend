@@ -30,14 +30,16 @@ export class PendingNotificationLogPort implements NotificationPort {
   async sendLoanRaisedNotification(
     customerId: string,
     memberAmountKobo: number,
-    groupCumulativeAmountKobo: number,
     raisedAt: Date,
   ): Promise<void> {
     await this.enqueue(NotificationTrigger.LOAN_RAISED, customerId, {
       memberAmountKobo,
-      groupCumulativeAmountKobo,
       raisedAt,
     });
+  }
+
+  async sendLoanApprovedNotification(customerId: string, approvedAt: Date): Promise<void> {
+    await this.enqueue(NotificationTrigger.LOAN_APPROVED, customerId, { approvedAt });
   }
 
   async sendVerificationEscalation(
@@ -83,6 +85,21 @@ export class PendingNotificationLogPort implements NotificationPort {
     relatedWorkflowRequestId: string;
   }): Promise<void> {
     this.logger.log(`[STUB] Repayment dispute raised: ${JSON.stringify(params)}`);
+    return Promise.resolve();
+  }
+
+  async sendLoanConsentCode(customerId: string, code: string, expiresAt: Date): Promise<void> {
+    await this.enqueue(NotificationTrigger.LOAN_CONSENT_CODE, customerId, { code, expiresAt });
+  }
+
+  /** Staff-facing — same "logged no-op, doesn't fit PendingNotificationLog's customer-shaped schema" reasoning as sendRepaymentDisputeRaised above. */
+  sendRepaymentSubmittedForReview(params: {
+    repaymentRecordId: string;
+    branchId: string;
+    recordedBy: string;
+    amountKobo: number;
+  }): Promise<void> {
+    this.logger.log(`[STUB] Repayment submitted for review: ${JSON.stringify(params)}`);
     return Promise.resolve();
   }
 

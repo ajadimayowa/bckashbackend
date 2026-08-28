@@ -29,9 +29,9 @@ import {
 import { WorkflowEngineService } from '../../../platform/workflow-engine/workflow-engine.service';
 import { InMemoryMongo } from '../../../test-utils/in-memory-mongo';
 import { Branch, BranchSchema } from '../../branches/schemas/branch.schema';
-import { BranchManagerAssignmentService } from '../../branches/branch-manager-assignment.service';
 import {
   BranchManagerAssignment,
+  BranchManagerAssignmentDocument,
   BranchManagerAssignmentSchema,
 } from '../../branches/schemas/branch-manager-assignment.schema';
 import { DepartmentsService } from '../../identity/departments.service';
@@ -46,10 +46,15 @@ import { InvolvedPartiesResolver } from './involved-parties.resolver';
 
 describe('InvolvedPartiesResolver', () => {
   const mongo = new InMemoryMongo();
+  // A stand-in for an admin actor who isn't otherwise a Staff fixture in a
+  // given test — must be a valid ObjectId hex string, not an arbitrary
+  // label, since assignedBy is a real ObjectId-typed schema path (see
+  // branch-manager-assignment.schema.ts).
+  const ADMIN_ACTOR_ID = new Types.ObjectId().toString();
   let moduleRef: TestingModule;
   let resolver: InvolvedPartiesResolver;
   let staffModel: Model<StaffDocument>;
-  let branchManagerAssignmentService: BranchManagerAssignmentService;
+  let branchManagerAssignmentModel: Model<BranchManagerAssignmentDocument>;
   let workflowRequestModel: Model<WorkflowRequestDocument>;
   let branchId: string;
 
@@ -86,14 +91,13 @@ describe('InvolvedPartiesResolver', () => {
         BvnCallLogService,
         MockBvnVerificationAdapter,
         { provide: BVN_VERIFICATION_ADAPTER, useExisting: MockBvnVerificationAdapter },
-        BranchManagerAssignmentService,
         InvolvedPartiesResolver,
       ],
     }).compile();
 
     resolver = moduleRef.get(InvolvedPartiesResolver);
     staffModel = moduleRef.get(getModelToken(Staff.name));
-    branchManagerAssignmentService = moduleRef.get(BranchManagerAssignmentService);
+    branchManagerAssignmentModel = moduleRef.get(getModelToken(BranchManagerAssignment.name));
     workflowRequestModel = moduleRef.get(getModelToken(WorkflowRequest.name));
 
     await moduleRef.init();
@@ -153,7 +157,19 @@ describe('InvolvedPartiesResolver', () => {
   it('includes the initiator and the current branch manager', async () => {
     const marketer = await createStaff(StaffRole.MARKETER);
     const manager = await createStaff(StaffRole.MANAGER);
-    await branchManagerAssignmentService.assignManager(branchId, manager._id.toString(), 'admin');
+    // Fixture setup only — inserted directly rather than through
+    // BranchManagerAssignmentService (now a full maker-checker workflow,
+    // see its own doc comment) this spec has no interest in exercising, and
+    // whose branch-existence check `branchId` here (a bare foreign key, not
+    // a real Branch document) wouldn't satisfy.
+    await branchManagerAssignmentModel.create({
+      branchId: new Types.ObjectId(branchId),
+      staffId: manager._id,
+      startDate: new Date(),
+      endDate: null,
+      assignedBy: new Types.ObjectId(ADMIN_ACTOR_ID),
+      approvedBy: new Types.ObjectId(ADMIN_ACTOR_ID),
+    });
     const admin = await createStaff(StaffRole.ADMIN);
     const request = await createWorkflowRequestWithActedSteps([admin._id.toString()]);
 
@@ -228,11 +244,14 @@ describe('InvolvedPartiesResolver', () => {
 
   it('deduplicates a staff member who occupies more than one of these roles at once', async () => {
     const managerWhoInitiated = await createStaff(StaffRole.MANAGER);
-    await branchManagerAssignmentService.assignManager(
-      branchId,
-      managerWhoInitiated._id.toString(),
-      'admin',
-    );
+    await branchManagerAssignmentModel.create({
+      branchId: new Types.ObjectId(branchId),
+      staffId: managerWhoInitiated._id,
+      startDate: new Date(),
+      endDate: null,
+      assignedBy: new Types.ObjectId(ADMIN_ACTOR_ID),
+      approvedBy: new Types.ObjectId(ADMIN_ACTOR_ID),
+    });
     const admin = await createStaff(StaffRole.ADMIN);
 
     const recipients = await resolver.resolveInvolvedParties({

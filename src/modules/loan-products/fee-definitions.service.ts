@@ -12,6 +12,7 @@ import {
   PenaltyFrequency,
 } from '../../common/enums/loan-product.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
+import { compactFilter } from '../../common/utils/compact-filter.util';
 import { AuditService } from '../../platform/audit/audit.service';
 import { approveCapability } from '../../platform/rbac/constants/capabilities';
 import {
@@ -324,7 +325,12 @@ export class FeeDefinitionsService implements OnModuleInit {
   async findAll(
     filter: { category?: FeeCategory; active?: boolean } = {},
   ): Promise<FeeDefinitionDocument[]> {
-    return this.feeDefinitionModel.find(filter).sort({ createdAt: -1 }).exec();
+    // See compactFilter's own doc comment — an absent `?category=`/`?active=`
+    // query param comes through as `undefined`, and Mongoose treats
+    // `{ category: undefined }` as an actual (never-true) constraint, not
+    // "no filter". This is what made GET /fee-definitions return `[]`
+    // despite real fee definitions existing.
+    return this.feeDefinitionModel.find(compactFilter(filter)).sort({ createdAt: -1 }).exec();
   }
 
   /**

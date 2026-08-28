@@ -10,7 +10,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { approveCapability, initiateCapability } from '../../platform/rbac/constants/capabilities';
@@ -39,6 +39,10 @@ export class RepaymentsController {
 
   @Post()
   @RequireCapability(INITIATE_REPAYMENT)
+  @ApiOperation({
+    summary: 'Record a repayment',
+    description: 'No balance effect until Manager review + Admin/Approver approval.',
+  })
   async recordRepayment(
     @Body() dto: RecordRepaymentDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -50,6 +54,10 @@ export class RepaymentsController {
   @Post(':id/proof')
   @RequireCapability(INITIATE_REPAYMENT)
   @UseInterceptors(FileInterceptor('image'))
+  @ApiOperation({
+    summary: 'Attach proof-of-payment to a repayment record',
+    description: 'Attachable at any point, not gated by status.',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -72,6 +80,11 @@ export class RepaymentsController {
 
   @Post(':id/dispute')
   @RequireCapability(INITIATE_REPAYMENT)
+  @ApiOperation({
+    summary: 'Raise a dispute on a repayment record',
+    description:
+      'Reverses the balance effect first if it was already APPROVED — idempotent, never double-reverses.',
+  })
   async raiseDispute(
     @Param('id') id: string,
     @Body() dto: RaiseDisputeDto,
@@ -82,6 +95,11 @@ export class RepaymentsController {
 
   @Post(':id/dispute/resolve')
   @RequireCapability(APPROVE_REPAYMENT)
+  @ApiOperation({
+    summary: 'Resolve a repayment dispute',
+    description:
+      'APPROVED re-applies the balance effect; REJECTED leaves it reversed. Requires a note.',
+  })
   async resolveDispute(
     @Param('id') id: string,
     @Body() dto: ResolveDisputeDto,
@@ -93,11 +111,15 @@ export class RepaymentsController {
   // Admin visibility — see RepaymentsService.findStaleDisputes's own doc comment.
   @Get('disputes/stale')
   @RequireCapability(APPROVE_REPAYMENT)
+  @ApiOperation({
+    summary: 'List disputes raised before a cutoff (default 7 days) and still unresolved',
+  })
   async findStaleDisputes(@Query('days') days?: string): Promise<RepaymentRecord[]> {
     return this.repaymentsService.findStaleDisputes(days ? Number(days) : undefined);
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a repayment record by id' })
   findOne(@Param('id') id: string): Promise<RepaymentRecord> {
     return this.repaymentsService.findByIdOrThrow(id);
   }

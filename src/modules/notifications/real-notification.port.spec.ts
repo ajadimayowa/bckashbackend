@@ -8,9 +8,12 @@ import { NotificationTrigger } from '../../common/enums/notification.enums';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
 import { Loan, LoanDocument, LoanSchema } from '../loans/schemas/loan.schema';
 import { WorkflowEngineService } from '../../platform/workflow-engine/workflow-engine.service';
+import { BranchesService } from '../branches/branches.service';
+import { StaffService } from '../identity/staff.service';
 import { NotificationService } from './notification.service';
 import { CustomerRecipientResolver } from './recipient-resolution/customer-recipient.resolver';
 import { InvolvedPartiesResolver } from './recipient-resolution/involved-parties.resolver';
+import { BranchOperationalRecipientsResolver } from './recipient-resolution/branch-operational-recipients.resolver';
 import { RealNotificationPort } from './real-notification.port';
 
 describe('RealNotificationPort', () => {
@@ -61,6 +64,16 @@ describe('RealNotificationPort', () => {
       getHistory: getHistorySpy,
     } as unknown as WorkflowEngineService;
     const fakeNotificationService = { dispatch: dispatchSpy } as unknown as NotificationService;
+    const fakeBranchOperationalRecipientsResolver = {
+      resolveManager: jest.fn().mockResolvedValue([]),
+      resolveAdminApprovers: jest.fn().mockResolvedValue([]),
+    } as unknown as BranchOperationalRecipientsResolver;
+    const fakeBranchesService = {
+      findById: jest.fn().mockResolvedValue(null),
+    } as unknown as BranchesService;
+    const fakeStaffService = {
+      findById: jest.fn().mockResolvedValue(null),
+    } as unknown as StaffService;
 
     port = new RealNotificationPort(
       loanModel,
@@ -68,6 +81,9 @@ describe('RealNotificationPort', () => {
       fakeInvolvedPartiesResolver,
       fakeWorkflowEngineService,
       fakeNotificationService,
+      fakeBranchOperationalRecipientsResolver,
+      fakeBranchesService,
+      fakeStaffService,
     );
   });
 
@@ -80,16 +96,18 @@ describe('RealNotificationPort', () => {
     await mongo.stop();
   });
 
-  it('sendLoanRaisedNotification dispatches once, straight to the customer', async () => {
-    await port.sendLoanRaisedNotification('cust-1', 50_000, 200_000, new Date());
+  it('sendLoanRaisedNotification dispatches once, straight to the customer, with only their own share', async () => {
+    await port.sendLoanRaisedNotification('cust-1', 50_000, new Date());
 
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     expect(dispatchSpy).toHaveBeenCalledWith(
       NotificationTrigger.LOAN_RAISED,
       'cust-1',
       expect.objectContaining({ kind: 'CUSTOMER', id: 'cust-1' }),
-      expect.objectContaining({ memberAmountKobo: 50_000, groupCumulativeAmountKobo: 200_000 }),
+      expect.objectContaining({ memberAmountKobo: 50_000 }),
     );
+    const dispatchedPayload = dispatchSpy.mock.calls[0]?.[3] as Record<string, unknown>;
+    expect(dispatchedPayload).not.toHaveProperty('groupCumulativeAmountKobo');
   });
 
   it('sendVerificationEscalation resolves involved parties from the Loan record and dispatches once per resolved staff recipient (not one combined job)', async () => {
@@ -98,7 +116,7 @@ describe('RealNotificationPort', () => {
       productId: new Types.ObjectId(),
       branchId: new Types.ObjectId(),
       raisedBy: new Types.ObjectId(),
-      tenureMonths: 6,
+      tenureDays: 14,
       cumulativeAmountKobo: 200_000,
       status: LoanStatus.APPROVED,
       raisedAt: new Date(),
@@ -135,7 +153,7 @@ describe('RealNotificationPort', () => {
       productId: new Types.ObjectId(),
       branchId: new Types.ObjectId(),
       raisedBy: new Types.ObjectId(),
-      tenureMonths: 6,
+      tenureDays: 14,
       cumulativeAmountKobo: 200_000,
       status: LoanStatus.APPROVED,
       raisedAt: new Date(),

@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
-import { NotificationTrigger } from '../../common/enums/notification.enums';
+import { NotificationCategory, NotificationTrigger } from '../../common/enums/notification.enums';
 import { NotificationPort } from '../loans/interfaces/notification-port.interface';
 // Cross-module raw model injection, purely to resolve `branchId`/`raisedBy`
 // for `sendVerificationEscalation`'s involved-parties resolution — same
@@ -11,8 +11,11 @@ import { NotificationPort } from '../loans/interfaces/notification-port.interfac
 // injection, PHASE_10_NOTES.md).
 import { Loan, LoanDocument } from '../loans/schemas/loan.schema';
 import { WorkflowEngineService } from '../../platform/workflow-engine/workflow-engine.service';
+import { BranchesService } from '../branches/branches.service';
+import { StaffService } from '../identity/staff.service';
 import { CustomerRecipientResolver } from './recipient-resolution/customer-recipient.resolver';
 import { InvolvedPartiesResolver } from './recipient-resolution/involved-parties.resolver';
+import { BranchOperationalRecipientsResolver } from './recipient-resolution/branch-operational-recipients.resolver';
 import { NotificationService } from './notification.service';
 
 /**
@@ -30,12 +33,14 @@ export class RealNotificationPort implements NotificationPort {
     private readonly involvedPartiesResolver: InvolvedPartiesResolver,
     private readonly workflowEngineService: WorkflowEngineService,
     private readonly notificationService: NotificationService,
+    private readonly branchOperationalRecipientsResolver: BranchOperationalRecipientsResolver,
+    private readonly branchesService: BranchesService,
+    private readonly staffService: StaffService,
   ) {}
 
   async sendLoanRaisedNotification(
     customerId: string,
     memberAmountKobo: number,
-    groupCumulativeAmountKobo: number,
     raisedAt: Date,
   ): Promise<void> {
     const recipient = await this.customerRecipientResolver.resolve(customerId);
@@ -45,9 +50,18 @@ export class RealNotificationPort implements NotificationPort {
       recipient,
       {
         memberAmountKobo,
-        groupCumulativeAmountKobo,
         raisedAt,
       },
+    );
+  }
+
+  async sendLoanApprovedNotification(customerId: string, approvedAt: Date): Promise<void> {
+    const recipient = await this.customerRecipientResolver.resolve(customerId);
+    await this.notificationService.dispatch(
+      NotificationTrigger.LOAN_APPROVED,
+      customerId,
+      recipient,
+      { approvedAt },
     );
   }
 
@@ -128,6 +142,54 @@ export class RealNotificationPort implements NotificationPort {
         raisedBy: params.raisedBy,
         reason: params.reason,
       },
+    );
+  }
+
+  async sendLoanConsentCode(customerId: string, code: string, expiresAt: Date): Promise<void> {
+    const recipient = await this.customerRecipientResolver.resolve(customerId);
+    await this.notificationService.dispatch(
+      NotificationTrigger.LOAN_CONSENT_CODE,
+      customerId,
+      recipient,
+      { code, expiresAt },
+    );
+  }
+
+  /**
+   * See NotificationPort.sendRepaymentSubmittedForReview's own doc comment —
+   * "whoever acts next" here is the branch's current manager (the
+   * REPAYMENT_RECORD chain's review step), resolved the same way
+   * BranchOperationalEventListenersService.handleFundingRecorded resolves
+   * its own manager-tier recipient.
+   */
+  async sendRepaymentSubmittedForReview(params: {
+    repaymentRecordId: string;
+    branchId: string;
+    recordedBy: string;
+    amountKobo: number;
+  }): Promise<void> {
+    const [managers, branch, recordedByStaff] = await Promise.all([
+      this.branchOperationalRecipientsResolver.resolveManager(params.branchId),
+      this.branchesService.findById(params.branchId).catch(() => null),
+      this.staffService.findById(params.recordedBy).catch(() => null),
+    ]);
+    if (managers.length === 0) {
+      return; // A branch's manager slot can legitimately sit empty — logged upstream by resolveManager's own callers elsewhere, nothing more to do here.
+    }
+    const branchName = branch?.name ?? 'a branch';
+    const recordedByName = recordedByStaff
+      ? `${recordedByStaff.firstName} ${recordedByStaff.lastName}`.trim()
+      : 'a marketer';
+    await Promise.all(
+      managers.map((manager) =>
+        this.notificationService.dispatch(
+          NotificationTrigger.REPAYMENT_RECORD_SUBMITTED,
+          params.repaymentRecordId,
+          { kind: 'STAFF', id: manager._id.toString(), email: manager.email, phone: manager.phoneNumber },
+          { branchName, recordedByName, amountKobo: params.amountKobo },
+          { category: NotificationCategory.BRANCH_MANAGER, branchId: params.branchId },
+        ),
+      ),
     );
   }
 

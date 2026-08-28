@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -32,6 +33,7 @@ import {
   MemberLoanAccountDocument,
 } from '../loans/schemas/member-loan-account.schema';
 import { Loan, LoanDocument } from '../loans/schemas/loan.schema';
+import { LoansService } from '../loans/loans.service';
 import { REPAYMENT_APPLIED_EVENT, RepaymentAppliedEvent } from './events/repayments.events';
 import {
   EarlyLiquidationRequest,
@@ -58,6 +60,8 @@ export interface InitiateEarlyLiquidationResult {
  */
 @Injectable()
 export class EarlyLiquidationService implements OnModuleInit {
+  private readonly logger = new Logger(EarlyLiquidationService.name);
+
   constructor(
     @InjectModel(EarlyLiquidationRequest.name)
     private readonly earlyLiquidationRequestModel: Model<EarlyLiquidationRequestDocument>,
@@ -71,6 +75,10 @@ export class EarlyLiquidationService implements OnModuleInit {
     private readonly feeDefinitionsService: FeeDefinitionsService,
     private readonly workflowEngineService: WorkflowEngineService,
     private readonly auditService: AuditService,
+    // See RepaymentsService's own doc comment on its identical injection —
+    // same "RepaymentsModule already imports LoansModule, one-directional"
+    // safety.
+    private readonly loansService: LoansService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -360,6 +368,16 @@ export class EarlyLiquidationService implements OnModuleInit {
         entityId: liquidationRequestId.toString(),
         after: { status: EarlyLiquidationStatus.COMPLETED },
         metadata: { repaymentRecordId: repayment._id.toString() },
+      });
+
+      // Same post-commit loan-completion resync as
+      // RepaymentsService.applyToBalance's own — this account just closed
+      // via liquidation payoff rather than a plain repayment, but the "is
+      // every one of this Loan's accounts CLOSED now?" check is identical.
+      await this.loansService.syncCompletionStatus(repayment.loanId.toString()).catch((error) => {
+        this.logger.error(
+          `Failed to resync completion status for loan ${repayment.loanId.toString()}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       });
     }
   }

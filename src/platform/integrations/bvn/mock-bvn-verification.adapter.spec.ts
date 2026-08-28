@@ -8,9 +8,7 @@ import { __resetPiiEncryptionKeyCache } from '../../../common/crypto/pii-encrypt
 import { InMemoryMongo } from '../../../test-utils/in-memory-mongo';
 import { EncryptionService } from '../../encryption/encryption.service';
 import { BvnCallLogService } from './bvn-call-log.service';
-import { BvnConsentExpiredException } from './exceptions/bvn-consent-expired.exception';
-import { BvnOtpInvalidException } from './exceptions/bvn-otp-invalid.exception';
-import { MOCK_BVN_OTP, MockBvnVerificationAdapter } from './mock-bvn-verification.adapter';
+import { MockBvnVerificationAdapter } from './mock-bvn-verification.adapter';
 import { BvnCallLog, BvnCallLogDocument, BvnCallLogSchema } from './schemas/bvn-call-log.schema';
 
 describe('MockBvnVerificationAdapter', () => {
@@ -45,47 +43,21 @@ describe('MockBvnVerificationAdapter', () => {
     await mongo.stop();
   });
 
-  it('runs the full consent -> confirm flow end to end with no live calls', async () => {
-    const initiation = await adapter.initiateConsent('12345678901');
-    const details = await adapter.confirmConsent(initiation.consentToken, MOCK_BVN_OTP);
+  it('directVerify is deterministic — same bvn always resolves the same details', async () => {
+    const first = await adapter.directVerify('12345678901');
+    const second = await adapter.directVerify('12345678901');
 
-    expect(details.bvn).toBe('12345678901');
-    expect(details.firstName).toBeTruthy();
+    expect(first.bvn).toBe('12345678901');
+    expect(first.firstName).toBeTruthy();
+    expect(first).toEqual(second);
   });
 
-  it('throws BvnOtpInvalidException for any OTP other than the fixed mock OTP', async () => {
-    const initiation = await adapter.initiateConsent('12345678901');
-
-    await expect(adapter.confirmConsent(initiation.consentToken, '999999')).rejects.toThrow(
-      BvnOtpInvalidException,
-    );
-  });
-
-  it('throws BvnConsentExpiredException for an unknown/already-used consent token', async () => {
-    await expect(adapter.confirmConsent('never-issued-token', MOCK_BVN_OTP)).rejects.toThrow(
-      BvnConsentExpiredException,
-    );
-  });
-
-  it('a consent token is one-time-use — confirming twice fails the second time', async () => {
-    const initiation = await adapter.initiateConsent('12345678901');
-    await adapter.confirmConsent(initiation.consentToken, MOCK_BVN_OTP);
-
-    await expect(adapter.confirmConsent(initiation.consentToken, MOCK_BVN_OTP)).rejects.toThrow(
-      BvnConsentExpiredException,
-    );
-  });
-
-  it('directVerify works standalone, with no prior consent', async () => {
-    const details = await adapter.directVerify('10987654321');
-    expect(details.bvn).toBe('10987654321');
-  });
-
-  it('writes BvnCallLog entries for every call', async () => {
+  it('writes a BvnCallLog entry for every call', async () => {
     const callLogModel = moduleRef.get<Model<BvnCallLogDocument>>(getModelToken(BvnCallLog.name));
     await adapter.directVerify('12345678901');
 
     const logs = await callLogModel.find({ step: 'DIRECT_VERIFY' }).exec();
     expect(logs).toHaveLength(1);
+    expect(logs[0]?.success).toBe(true);
   });
 });

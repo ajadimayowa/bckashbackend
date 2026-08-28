@@ -10,6 +10,9 @@ export class Department {
 
   @Prop({ type: Boolean, required: true, default: true })
   active!: boolean;
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const DepartmentSchema = SchemaFactory.createForClass(Department);

@@ -59,6 +59,21 @@ export enum DisbursementChannel {
 }
 
 /**
+ * ADDED (weekly-repayment brief, "cheque pickup penalty grace"): a
+ * CHEQUE_PICKUP borrower needs time to actually go cash/process the cheque
+ * at the bank before their first repayment clock is fair to start counting
+ * against — so a CHEQUE_PICKUP MemberLoanAccount's overdue-penalty grace is
+ * `LoanProduct.penaltyRule.gracePeriodDays + this constant`, never the raw
+ * product grace alone. TRANSFER accounts are unaffected (buffer of 0).
+ * A flat, non-configurable buffer (not a per-product field) — flagged as a
+ * deliberate simplification, same as this project's other "resolve to a
+ * sensible default, document it" calls: revisit if a future product ever
+ * needs a different buffer. See PenaltySweepService.sweepAccountPenalties
+ * and CustomerRiskService, the two consumers.
+ */
+export const CHEQUE_PICKUP_PENALTY_GRACE_BUFFER_DAYS = 6;
+
+/**
  * `FAILED` is kept for type completeness (present in the brief's literal type
  * union) but, like `LoanStatus.VERIFICATION_FAILED` above, is never actually
  * produced by `LoanVerificationService.initiateMemberVerification` — a failing

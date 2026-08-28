@@ -11,6 +11,7 @@ import {
   ProductStatus,
 } from '../../common/enums/loan-product.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
+import { compactFilter } from '../../common/utils/compact-filter.util';
 import { AuditService } from '../../platform/audit/audit.service';
 import {
   ALL_KNOWN_CAPABILITIES,
@@ -52,6 +53,7 @@ interface LoanProductCreationPayload {
   interestType: InterestType;
   tenureOptions: number[];
   minGroupSize: number;
+  repaymentPeriodDays: number;
   feeIds: string[];
   approvalChainSteps: ApprovalChainStepLike[];
   penaltyRule: PenaltyRule;
@@ -63,6 +65,7 @@ interface LoanProductUpdateChanges {
   interestType?: InterestType;
   tenureOptions?: number[];
   minGroupSize?: number;
+  repaymentPeriodDays?: number;
   feeIds?: string[];
   approvalChainSteps?: ApprovalChainStepLike[];
   penaltyRule?: PenaltyRule;
@@ -171,10 +174,16 @@ export class LoanProductsService implements OnModuleInit {
     dto: CreateLoanProductDto,
     initiatedBy: string,
   ): Promise<WorkflowRequestDocument> {
-    // Redundant with the DTO's @Min(3), same "service must not trust a
-    // caller that bypasses the DTO layer" reasoning as GroupsService.
+    // Redundant with the DTO's @Min(3)/@Min(14), same "service must not
+    // trust a caller that bypasses the DTO layer" reasoning as GroupsService.
     if (dto.minGroupSize < 3) {
       throw new BadRequestException('minGroupSize must be at least 3');
+    }
+    if (dto.tenureOptions.some((days) => days < 14)) {
+      throw new BadRequestException('Every tenureOptions entry must be at least 14 days');
+    }
+    if (dto.repaymentPeriodDays !== undefined && dto.repaymentPeriodDays < 1) {
+      throw new BadRequestException('repaymentPeriodDays must be at least 1');
     }
     this.validateApprovalChainSteps(dto.approvalChainSteps);
     const penaltyRule = this.resolvePenaltyRule(dto.penaltyRule);
@@ -189,6 +198,9 @@ export class LoanProductsService implements OnModuleInit {
       interestType: dto.interestType,
       tenureOptions: dto.tenureOptions,
       minGroupSize: dto.minGroupSize,
+      // Defaults to 7 (weekly) when the caller doesn't specify one — see
+      // LoanProduct.repaymentPeriodDays's own doc comment.
+      repaymentPeriodDays: dto.repaymentPeriodDays ?? 7,
       feeIds: dto.feeIds,
       approvalChainSteps: dto.approvalChainSteps.map((s) => ({
         order: s.order,
@@ -214,6 +226,7 @@ export class LoanProductsService implements OnModuleInit {
       interestType: payload.interestType,
       tenureOptions: payload.tenureOptions,
       minGroupSize: payload.minGroupSize,
+      repaymentPeriodDays: payload.repaymentPeriodDays,
       feeIds: payload.feeIds.map((id) => new Types.ObjectId(id)),
       approvalChainSteps: payload.approvalChainSteps,
       penaltyRule: payload.penaltyRule,
@@ -248,6 +261,12 @@ export class LoanProductsService implements OnModuleInit {
 
     if (dto.minGroupSize !== undefined && dto.minGroupSize < 3) {
       throw new BadRequestException('minGroupSize must be at least 3');
+    }
+    if (dto.tenureOptions !== undefined && dto.tenureOptions.some((days) => days < 14)) {
+      throw new BadRequestException('Every tenureOptions entry must be at least 14 days');
+    }
+    if (dto.repaymentPeriodDays !== undefined && dto.repaymentPeriodDays < 1) {
+      throw new BadRequestException('repaymentPeriodDays must be at least 1');
     }
     if (dto.approvalChainSteps !== undefined) {
       this.validateApprovalChainSteps(dto.approvalChainSteps);
@@ -375,6 +394,12 @@ export class LoanProductsService implements OnModuleInit {
   }
 
   async findAll(filter: { status?: ProductStatus } = {}): Promise<LoanProductDocument[]> {
-    return this.loanProductModel.find(filter).sort({ createdAt: -1 }).exec();
+    // compactFilter matters here: `@Query('status') status?: ProductStatus`
+    // is `undefined` when the caller doesn't pass one, and Mongoose treats
+    // `{ status: undefined }` as "status must literally be undefined" —
+    // never true for a real document — not "no filter". See its own doc
+    // comment; this is what made GET /loan-products with no `?status=`
+    // return `[]` despite real ACTIVE products existing.
+    return this.loanProductModel.find(compactFilter(filter)).sort({ createdAt: -1 }).exec();
   }
 }

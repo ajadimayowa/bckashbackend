@@ -224,11 +224,45 @@ export function approveSalaryActor(staffId: string): ActingStaff {
   return { staffId, capabilities: [approveCapability(WorkflowEntityType.SALARY_RECORD)] };
 }
 
+export function approveBranchManagerAssignmentActor(staffId: string): ActingStaff {
+  return { staffId, capabilities: [approveCapability(WorkflowEntityType.BRANCH_MANAGER_ASSIGNMENT)] };
+}
+
+/**
+ * Fixture helper — proposes then immediately approves a branch manager
+ * assignment (now a maker-checker workflow, see
+ * BranchManagerAssignmentService's own doc comment), since most callers in
+ * this test suite just need a branch to already have a manager on record
+ * and have no interest in exercising the approval step itself. `approverId`
+ * defaults to a throwaway id distinct from `initiatorId` — the engine
+ * rejects same-actor approval.
+ */
+export async function assignBranchManager(
+  ctx: HrTestContext,
+  branchId: string,
+  staffId: string,
+  initiatorId: string,
+  approverId: string = new Types.ObjectId().toString(),
+): Promise<void> {
+  const request = await ctx.branchManagerAssignmentService.initiateAssignment(
+    branchId,
+    staffId,
+    undefined,
+    initiatorId,
+  );
+  await actOnWorkflow(
+    ctx,
+    request._id.toString(),
+    approveBranchManagerAssignmentActor(approverId),
+  );
+}
+
 export async function actOnWorkflow(
   ctx: HrTestContext,
   workflowRequestId: string,
   actor: ActingStaff,
   action: WorkflowStepAction = WorkflowStepAction.APPROVED,
+  comment?: string,
 ): Promise<void> {
-  await ctx.workflowEngineService.act({ workflowRequestId, actor, action });
+  await ctx.workflowEngineService.act({ workflowRequestId, actor, action, comment });
 }

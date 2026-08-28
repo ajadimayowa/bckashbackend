@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { NOTIFICATIONS_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -35,11 +35,19 @@ export class NotificationAdminController {
    * why this is safe to call more than once.
    */
   @Post('backlog/drain')
+  @ApiOperation({
+    summary: 'Drain the PendingNotificationLog backlog',
+    description: 'Idempotent — safe to call more than once, including a restart mid-drain.',
+  })
   drainBacklog(): Promise<BacklogDrainResult> {
     return this.backlogDrainService.drain();
   }
 
   @Get('dead-letters')
+  @ApiOperation({
+    summary: 'List notifications that exhausted every retry attempt',
+    description: 'Paginated.',
+  })
   findDeadLetters(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,

@@ -1,25 +1,30 @@
 import { Injectable } from '@nestjs/common';
 
 import { BvnCallLogService } from './bvn-call-log.service';
-import {
-  extractMessage,
-  decodeJwtExpiryMs,
-  mapToBvnDetails,
-  unwrapEnvelope,
-} from './bvn-response.util';
 import { BvnHttpClient } from './bvn-http-client.service';
 import { BvnCallEntityType, BvnCallStep } from './enums/bvn-call-log.enums';
-import { BvnConsentExpiredException } from './exceptions/bvn-consent-expired.exception';
-import { BvnOtpInvalidException } from './exceptions/bvn-otp-invalid.exception';
+import { BvnInvalidException } from './exceptions/bvn-invalid.exception';
 import { BvnProviderUnavailableException } from './exceptions/bvn-provider-unavailable.exception';
 import {
   BvnCallContext,
-  BvnConsentInitiation,
   BvnDetails,
   BvnVerificationAdapter,
 } from './interfaces/bvn-verification-adapter.interface';
 
-const DEFAULT_CONSENT_TTL_MINUTES = 10;
+/** The real BC Kash MFB `POST /identity/get_bvn` response shape — see "BC Kash MFB API Integration Documentation". Field casing (BVN/FirstName/LastName/OtherNames/DOB) is the provider's own, not ours. */
+interface GetBvnResponseBody {
+  RequestStatus?: boolean;
+  ResponseMessage?: string;
+  isBvnValid?: boolean;
+  bvnDetails?: {
+    BVN?: string;
+    phoneNumber?: string;
+    FirstName?: string;
+    LastName?: string;
+    OtherNames?: string;
+    DOB?: string;
+  };
+}
 
 @Injectable()
 export class RealBvnVerificationAdapter implements BvnVerificationAdapter {
@@ -28,141 +33,60 @@ export class RealBvnVerificationAdapter implements BvnVerificationAdapter {
     private readonly callLogService: BvnCallLogService,
   ) {}
 
-  async initiateConsent(bvn: string, context?: BvnCallContext): Promise<BvnConsentInitiation> {
-    const { status, body } = await this.httpClient.post<Record<string, unknown>>(
-      '/bvn/get-user-consent',
-      { bvn },
-    );
-    const unwrapped = unwrapEnvelope(body);
-    const consentToken = unwrapped.consentToken;
+  /**
+   * The provider's own single BVN endpoint. Its own integration notes are
+   * explicit: "A successful API request does not necessarily mean the BVN
+   * is valid... check isBvnValid: true before treating the BVN as
+   * verified" — so `RequestStatus: true` + `isBvnValid: false` is a real,
+   * distinct outcome (BvnInvalidException, 400) from a provider/network
+   * failure (BvnProviderUnavailableException, 503).
+   */
+  async directVerify(bvn: string, context?: BvnCallContext): Promise<BvnDetails> {
+    const { status, body } = await this.httpClient.post<GetBvnResponseBody>('/identity/get_bvn', {
+      bvn,
+    });
 
-    if (status < 200 || status >= 300 || typeof consentToken !== 'string') {
-      await this.log(
-        BvnCallStep.CONSENT_INITIATE,
-        bvn,
-        false,
-        status,
-        extractMessage(unwrapped),
-        context,
+    const requestOk = status >= 200 && status < 300 && body?.RequestStatus === true;
+    if (!requestOk) {
+      await this.log(bvn, false, status, body?.ResponseMessage ?? null, context);
+      throw new BvnProviderUnavailableException(
+        'direct verification',
+        `HTTP ${status}${body?.ResponseMessage ? ` — ${body.ResponseMessage}` : ''}`,
       );
-      throw new BvnProviderUnavailableException('consent initiation', extractMessage(unwrapped));
     }
 
-    await this.log(BvnCallStep.CONSENT_INITIATE, bvn, true, status, null, context);
+    const details = body.bvnDetails;
+    if (body?.isBvnValid !== true || !details?.BVN) {
+      await this.log(bvn, false, status, body?.ResponseMessage ?? 'isBvnValid: false', context);
+      throw new BvnInvalidException(body?.ResponseMessage);
+    }
 
-    const expiryMs = decodeJwtExpiryMs(consentToken);
-    const expiresAt = expiryMs
-      ? new Date(expiryMs)
-      : new Date(
-          Date.now() + Number(unwrapped.expiresInMinutes ?? DEFAULT_CONSENT_TTL_MINUTES) * 60_000,
-        );
+    await this.log(bvn, true, status, null, context);
 
     return {
-      consentToken,
-      otpSentToPhone: typeof unwrapped.phoneNumber === 'string' ? unwrapped.phoneNumber : '',
-      expiresAt,
+      bvn: details.BVN,
+      firstName: details.FirstName ?? '',
+      lastName: details.LastName ?? '',
+      otherNames: details.OtherNames || undefined,
+      dateOfBirth: details.DOB ?? '',
+      phoneNumber: details.phoneNumber ?? '',
+      rawResponse: body as unknown as Record<string, unknown>,
     };
   }
 
-  async confirmConsent(
-    consentToken: string,
-    otp: string,
-    context?: BvnCallContext,
-  ): Promise<BvnDetails> {
-    // Client-side pre-check — never even spend a provider call on a token we
-    // can already tell has expired.
-    const expiryMs = decodeJwtExpiryMs(consentToken);
-    if (expiryMs !== null && expiryMs < Date.now()) {
-      await this.log(
-        BvnCallStep.CONSENT_CONFIRM,
-        null,
-        false,
-        null,
-        'consent token expired (client-side check)',
-        context,
-      );
-      throw new BvnConsentExpiredException();
-    }
-
-    // retryOnUnauthorized: false — on this endpoint, 401 means "OTP didn't
-    // match" (a business outcome), not "our session token expired". See
-    // BvnHttpClient.post's doc comment and PHASE_5_NOTES.md.
-    const { status, body } = await this.httpClient.post<Record<string, unknown>>(
-      '/bvn/verify-user-kyc-consent',
-      { consentToken, otp },
-      { retryOnUnauthorized: false },
-    );
-
-    if (status === 401) {
-      await this.log(BvnCallStep.CONSENT_CONFIRM, null, false, status, 'otp mismatch', context);
-      throw new BvnOtpInvalidException();
-    }
-    if (status === 400) {
-      await this.log(
-        BvnCallStep.CONSENT_CONFIRM,
-        null,
-        false,
-        status,
-        'consent token invalid/expired',
-        context,
-      );
-      throw new BvnConsentExpiredException();
-    }
-
-    const unwrapped = unwrapEnvelope(body);
-    if (status < 200 || status >= 300 || !unwrapped.bvn) {
-      await this.log(
-        BvnCallStep.CONSENT_CONFIRM,
-        null,
-        false,
-        status,
-        extractMessage(unwrapped),
-        context,
-      );
-      throw new BvnProviderUnavailableException('consent confirmation', extractMessage(unwrapped));
-    }
-
-    const details = mapToBvnDetails(unwrapped);
-    await this.log(BvnCallStep.CONSENT_CONFIRM, details.bvn, true, status, null, context);
-    return details;
-  }
-
-  async directVerify(bvn: string, context?: BvnCallContext): Promise<BvnDetails> {
-    const { status, body } = await this.httpClient.post<Record<string, unknown>>('/bvn/verify', {
-      bvn,
-    });
-    const unwrapped = unwrapEnvelope(body);
-
-    if (status < 200 || status >= 300 || !unwrapped.bvn) {
-      await this.log(
-        BvnCallStep.DIRECT_VERIFY,
-        bvn,
-        false,
-        status,
-        extractMessage(unwrapped),
-        context,
-      );
-      throw new BvnProviderUnavailableException('direct verification', extractMessage(unwrapped));
-    }
-
-    await this.log(BvnCallStep.DIRECT_VERIFY, bvn, true, status, null, context);
-    return mapToBvnDetails(unwrapped);
-  }
-
   private async log(
-    step: BvnCallStep,
     bvn: string | null,
     success: boolean,
     providerStatusCode: number | null,
-    errorMessage: string | null | undefined,
+    errorMessage: string | null,
     context?: BvnCallContext,
   ): Promise<void> {
     await this.callLogService.record({
-      step,
+      step: BvnCallStep.DIRECT_VERIFY,
       bvn,
       success,
       providerStatusCode,
-      errorMessage: errorMessage ?? null,
+      errorMessage,
       calledBy: context?.calledBy ?? null,
       calledForEntityType: (context?.entityType as BvnCallEntityType | undefined) ?? null,
       calledForEntityId: context?.entityId ?? null,

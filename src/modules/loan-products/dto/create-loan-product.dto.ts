@@ -6,6 +6,7 @@ import {
   IsInt,
   IsMongoId,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Max,
   MaxLength,
@@ -32,17 +33,23 @@ export class CreateLoanProductDto {
   @IsEnum(InterestType)
   interestType!: InterestType;
 
-  /** Months, e.g. [3, 6, 12]. */
+  /** Days, e.g. [14, 30, 60] — 14 is the system-wide floor. */
   @IsArray()
   @ArrayMinSize(1)
   @IsInt({ each: true })
-  @Min(1, { each: true })
+  @Min(14, { each: true })
   tenureOptions!: number[];
 
   /** Hard floor of 3 — the system-wide group minimum. */
   @IsInt()
   @Min(3)
   minGroupSize!: number;
+
+  /** Days per repayment installment — defaults to 7 (weekly) when omitted. See LoanProduct.repaymentPeriodDays's own doc comment. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  repaymentPeriodDays?: number;
 
   @IsArray()
   @IsMongoId({ each: true })

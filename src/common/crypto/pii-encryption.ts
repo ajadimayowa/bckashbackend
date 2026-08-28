@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 
 /**
  * Field-level encryption for sensitive PII at rest (BVN, NIN, ...). AES-256-GCM:
@@ -84,4 +84,18 @@ export function decryptPii(ciphertext: string): string {
 /** Last 4 characters of a plaintext identifier, for display (e.g. "•••• 4321") without ever storing the full value unencrypted. */
 export function lastFour(plaintext: string): string {
   return plaintext.slice(-4);
+}
+
+/**
+ * Deterministic, one-way HMAC-SHA256 of a PII value (BVN, ...), keyed with
+ * the same PII_ENCRYPTION_KEY. `encryptPii` is deliberately randomized (a
+ * fresh IV every call) so it can never be used for equality lookups — this
+ * exists specifically so a field can still be checked for *uniqueness*
+ * (e.g. "has this BVN already been registered?") without ever decrypting
+ * every existing record to compare, and without weakening encryptPii
+ * itself to be deterministic. Never decryptable back to the plaintext.
+ */
+export function hashPii(plaintext: string): string {
+  const key = resolveKey();
+  return createHmac('sha256', key).update(plaintext).digest('hex');
 }

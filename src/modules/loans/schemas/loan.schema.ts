@@ -27,11 +27,15 @@ export class Loan {
   branchId!: Types.ObjectId;
 
   @Prop({ type: Number, required: true })
-  tenureMonths!: number;
+  tenureDays!: number;
 
   /** Kobo — sum of every member's requestedAmountKobo at raise time. */
   @Prop({ type: Number, required: true })
   cumulativeAmountKobo!: number;
+
+  /** Free-text reason for the loan, entered by the marketer at raise time — optional, purely informational, never gated on. */
+  @Prop({ type: String, default: null, trim: true })
+  purpose!: string | null;
 
   @Prop({ type: String, enum: LoanStatus, required: true, default: LoanStatus.PENDING_APPROVAL })
   status!: LoanStatus;

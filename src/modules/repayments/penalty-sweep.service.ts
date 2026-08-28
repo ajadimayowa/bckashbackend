@@ -3,7 +3,11 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 
 import { PenaltyFrequency, PenaltyPercentageBasis } from '../../common/enums/loan-product.enums';
-import { MemberLoanAccountStatus } from '../../common/enums/loan.enums';
+import {
+  CHEQUE_PICKUP_PENALTY_GRACE_BUFFER_DAYS,
+  DisbursementChannel,
+  MemberLoanAccountStatus,
+} from '../../common/enums/loan.enums';
 import { EarlyLiquidationStatus } from '../../common/enums/repayment.enums';
 import {
   LEDGER_POSTING_PORT,
@@ -133,6 +137,16 @@ export class PenaltySweepService {
     }
     const product = await this.loanProductsService.findByIdOrThrow(loan.productId.toString());
     const penaltyRule = product.penaltyRule;
+    // CHEQUE_PICKUP borrowers get an extra buffer on top of the product's
+    // own configured grace period — they need time to actually go
+    // cash/process the cheque at the bank before it's fair to start
+    // penalizing a missed payment. See CHEQUE_PICKUP_PENALTY_GRACE_BUFFER_DAYS's
+    // own doc comment; TRANSFER accounts get a buffer of 0 (unaffected).
+    const effectiveGracePeriodDays =
+      penaltyRule.gracePeriodDays +
+      (account.disbursementChannel === DisbursementChannel.CHEQUE_PICKUP
+        ? CHEQUE_PICKUP_PENALTY_GRACE_BUFFER_DAYS
+        : 0);
 
     const existingCharges = await this.penaltyChargeModel
       .find({ memberLoanAccountId: account._id })
@@ -172,14 +186,14 @@ export class PenaltySweepService {
       const daysLate = Math.floor(
         (referenceDate.getTime() - installment.dueDate.getTime()) / MS_PER_DAY,
       );
-      if (daysLate <= penaltyRule.gracePeriodDays) {
+      if (daysLate <= effectiveGracePeriodDays) {
         continue;
       }
 
       const periodIndex =
         penaltyRule.frequency === PenaltyFrequency.RECURRING
           ? Math.floor(
-              (daysLate - penaltyRule.gracePeriodDays) /
+              (daysLate - effectiveGracePeriodDays) /
                 (penaltyRule.recurrenceIntervalDays as number),
             )
           : 0;

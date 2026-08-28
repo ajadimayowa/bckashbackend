@@ -5,6 +5,7 @@ import { LeaveApplicationStatus, LeaveChainAction } from '../../common/enums/hr.
 import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import {
   actOnWorkflow,
+  assignBranchManager,
   approveLeaveActor,
   clearHrTestState,
   createBranch,
@@ -107,11 +108,7 @@ describe('LeaveApplicationService', () => {
         const leaveType = await createLeaveType(ctx);
         const manager = await createStaffMember(ctx, branchId, { role: StaffRole.MANAGER });
         const admin = await createStaffMember(ctx, branchId, { role: StaffRole.ADMIN });
-        await ctx.branchManagerAssignmentService.assignManager(
-          branchId,
-          manager._id.toString(),
-          admin._id.toString(),
-        );
+        await assignBranchManager(ctx, branchId, manager._id.toString(), admin._id.toString());
 
         const application = await ctx.leaveApplicationService.applyForLeave(
           manager._id.toString(),
@@ -167,11 +164,7 @@ describe('LeaveApplicationService', () => {
       const manager = await createStaffMember(ctx, branchId, { role: StaffRole.MANAGER });
       const admin1 = await createStaffMember(ctx, branchId, { role: StaffRole.ADMIN });
       const admin2 = await createStaffMember(ctx, branchId, { role: StaffRole.ADMIN });
-      await ctx.branchManagerAssignmentService.assignManager(
-        branchId,
-        manager._id.toString(),
-        admin1._id.toString(),
-      );
+      await assignBranchManager(ctx, branchId, manager._id.toString(), admin1._id.toString());
 
       const application = await ctx.leaveApplicationService.applyForLeave(
         manager._id.toString(),
@@ -248,11 +241,7 @@ describe('LeaveApplicationService', () => {
       const staff = await createStaffMember(ctx, branchId, { role: StaffRole.MARKETER });
       const manager = await createStaffMember(ctx, branchId, { role: StaffRole.MANAGER });
       const admin = await createStaffMember(ctx, branchId, { role: StaffRole.ADMIN });
-      await ctx.branchManagerAssignmentService.assignManager(
-        branchId,
-        manager._id.toString(),
-        admin._id.toString(),
-      );
+      await assignBranchManager(ctx, branchId, manager._id.toString(), admin._id.toString());
       const application = await ctx.leaveApplicationService.applyForLeave(
         staff._id.toString(),
         leaveTypeId,
@@ -312,6 +301,7 @@ describe('LeaveApplicationService', () => {
         workflowRequestId,
         reviewLeaveActor(manager._id.toString()),
         WorkflowStepAction.REJECTED,
+        'Insufficient cover on the requested dates',
       );
 
       const reloaded = await ctx.leaveApplicationModel.findById(application._id).exec();

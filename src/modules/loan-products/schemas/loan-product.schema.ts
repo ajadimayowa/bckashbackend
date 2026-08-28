@@ -82,9 +82,26 @@ export class LoanProduct {
   @Prop({ type: String, enum: InterestType, required: true })
   interestType!: InterestType;
 
-  /** Months, e.g. [3, 6, 12]. */
+  /** Days, e.g. [14, 30, 60] — 14 is the system-wide floor, enforced by LoanProductsService/CreateLoanProductDto. */
   @Prop({ type: [Number], required: true })
   tenureOptions!: number[];
+
+  /**
+   * ADDED (weekly-repayment brief) — the number of calendar days one
+   * repayment installment covers. Defaults to 7 (weekly), the coop's
+   * standard cadence: interest/principal are spread evenly across
+   * `ceil(tenureDays / repaymentPeriodDays)` installments instead of one per
+   * calendar day, and each installment's due date is
+   * `repaymentPeriodDays` days after the previous one (the first one that
+   * many days after disbursement/cheque-pickup) — see
+   * `LoanVerificationService.disburse`/`normalizeSchedule`. Defaulted rather
+   * than backfilled per-product because nothing was ever actually deployed
+   * with the old one-installment-per-day behavior (see PHASE_7/8 notes'
+   * repeated "none were ever actually deployed" caveat) — every product,
+   * existing or new, gets the weekly cadence unless explicitly overridden.
+   */
+  @Prop({ type: Number, required: true, default: 7, min: 1 })
+  repaymentPeriodDays!: number;
 
   /** Hard floor of 3 — the system-wide group minimum from Phase 6 — enforced by LoanProductsService. */
   @Prop({ type: Number, required: true })

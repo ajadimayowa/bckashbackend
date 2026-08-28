@@ -143,6 +143,53 @@ describe('EarlyLiquidationService', () => {
     expect(closedAccount!.status).toBe(MemberLoanAccountStatus.CLOSED);
   });
 
+  it('recordRepayment allows up to an approved liquidation\'s totalPayableKobo, but still rejects beyond it', async () => {
+    const { memberLoanAccountIds } = await setUpDisbursedLoanWithLiquidationFee(1_000);
+    const accountId = memberLoanAccountIds[0]!;
+    const account = await ctx.memberLoanAccountModel.findById(accountId).exec();
+    const outstanding = account!.outstandingBalanceKobo!;
+
+    const { request, workflowRequest } = await ctx.earlyLiquidationService.initiateEarlyLiquidation(
+      accountId,
+      ctx.INITIATOR_ID,
+    );
+    await approveLiquidation(workflowRequest._id.toString());
+    const approvedRequest = await ctx.earlyLiquidationService.findByIdOrThrow(request._id.toString());
+    // totalPayableKobo (outstanding + fee) exceeds the plain outstanding
+    // balance — recordRepayment must still accept it now that a liquidation
+    // for this account has been approved.
+    expect(approvedRequest.totalPayableKobo).toBeGreaterThan(outstanding);
+
+    await expect(
+      ctx.repaymentsService.recordRepayment(
+        {
+          memberLoanAccountId: accountId,
+          branchBankAccountId: ctx.branchBankAccountId,
+          channel: RepaymentChannel.BANK_TRANSFER,
+          transactionReference: `LIQ-OK-${Date.now()}`,
+          amountKobo: approvedRequest.totalPayableKobo,
+          paymentDate: new Date().toISOString(),
+        },
+        ctx.INITIATOR_ID,
+      ),
+    ).resolves.toBeDefined();
+
+    // But even the liquidation's own ceiling isn't unlimited.
+    await expect(
+      ctx.repaymentsService.recordRepayment(
+        {
+          memberLoanAccountId: accountId,
+          branchBankAccountId: ctx.branchBankAccountId,
+          channel: RepaymentChannel.BANK_TRANSFER,
+          transactionReference: `LIQ-TOOMUCH-${Date.now()}`,
+          amountKobo: approvedRequest.totalPayableKobo + 1,
+          paymentDate: new Date().toISOString(),
+        },
+        ctx.INITIATOR_ID,
+      ),
+    ).rejects.toThrow(/can't be greater than outstanding balance/i);
+  });
+
   it('a short/partial linked payment does NOT complete the liquidation — applies as an ordinary partial repayment instead', async () => {
     const { memberLoanAccountIds } = await setUpDisbursedLoanWithLiquidationFee(1_000);
     const accountId = memberLoanAccountIds[0]!;

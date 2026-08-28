@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { FeeCategory } from '../../common/enums/loan-product.enums';
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
@@ -12,9 +12,9 @@ import type { ResolvedStaffContext } from '../../platform/rbac/interfaces/staff-
 import { WorkflowRequestSummaryDto } from '../../platform/workflow-engine/dto/workflow-request-summary.dto';
 import { JwtAuthGuard } from '../identity/guards/jwt-auth.guard';
 import { CreateFeeDefinitionDto } from './dto/create-fee-definition.dto';
+import { FeeDefinitionResponseDto } from './dto/fee-definition-response.dto';
 import { UpdateFeeDefinitionDto } from './dto/update-fee-definition.dto';
 import { FeeDefinitionsService } from './fee-definitions.service';
-import { FeeDefinition } from './schemas/fee-definition.schema';
 
 const INITIATE_FEE_DEFINITION = initiateCapability(WorkflowEntityType.FEE_DEFINITION);
 
@@ -27,6 +27,10 @@ export class FeeDefinitionsController {
 
   @Post()
   @RequireCapability(INITIATE_FEE_DEFINITION)
+  @ApiOperation({
+    summary: 'Propose a new fee definition',
+    description: 'Admin-initiated, workflow-approved.',
+  })
   async create(
     @Body() dto: CreateFeeDefinitionDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -37,6 +41,7 @@ export class FeeDefinitionsController {
 
   @Patch(':id')
   @RequireCapability(INITIATE_FEE_DEFINITION)
+  @ApiOperation({ summary: 'Propose an update to an existing fee definition' })
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateFeeDefinitionDto,
@@ -50,18 +55,25 @@ export class FeeDefinitionsController {
   // will ever initiate a loan (Phase 8) needs to see available fees. See
   // PHASE_7_NOTES.md.
   @Get()
-  findAll(
+  @ApiOperation({
+    summary: 'List fee definitions',
+    description: 'Optionally filter by category and/or active status.',
+  })
+  async findAll(
     @Query('category') category?: FeeCategory,
     @Query('active') active?: string,
-  ): Promise<FeeDefinition[]> {
-    return this.feeDefinitionsService.findAll({
+  ): Promise<FeeDefinitionResponseDto[]> {
+    const fees = await this.feeDefinitionsService.findAll({
       category,
       active: active === undefined ? undefined : active === 'true',
     });
+    return fees.map((fee) => FeeDefinitionResponseDto.fromDocument(fee));
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Promise<FeeDefinition> {
-    return this.feeDefinitionsService.findByIdOrThrow(id);
+  @ApiOperation({ summary: 'Get a fee definition by id' })
+  async findOne(@Param('id') id: string): Promise<FeeDefinitionResponseDto> {
+    const fee = await this.feeDefinitionsService.findByIdOrThrow(id);
+    return FeeDefinitionResponseDto.fromDocument(fee);
   }
 }

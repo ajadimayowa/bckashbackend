@@ -23,12 +23,24 @@ export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT');
  * the way it did for `sendRepaymentDisputeRaised` below.
  */
 export interface NotificationPort {
+  /**
+   * Customer-facing — deliberately only the member's own share, never the
+   * group's cumulative amount (a customer has no need or right to know what
+   * their group-mates individually borrowed).
+   */
   sendLoanRaisedNotification(
     customerId: string,
     memberAmountKobo: number,
-    groupCumulativeAmountKobo: number,
     raisedAt: Date,
   ): Promise<void>;
+  /**
+   * Customer-facing — fired once per member as soon as their loan clears
+   * its full approval chain (LoansService.handleWorkflowApproved), telling
+   * them to come in for disbursement verification. Distinct from
+   * sendDisbursementCompleted below, which only fires once verification has
+   * actually passed and the money has moved.
+   */
+  sendLoanApprovedNotification(customerId: string, approvedAt: Date): Promise<void>;
   sendVerificationEscalation(loanId: string, customerId: string, reason: string): Promise<void>;
   sendDisbursementCompleted(customerId: string, amountKobo: number, channel: string): Promise<void>;
   /**
@@ -54,5 +66,29 @@ export interface NotificationPort {
     raisedBy: string;
     reason: string;
     relatedWorkflowRequestId: string;
+  }): Promise<void>;
+  /**
+   * Added for the loan-raise consent step (see LoanConsentService) —
+   * customer-facing, straight to the customer being raised for (not the
+   * marketer who requested it).
+   */
+  sendLoanConsentCode(customerId: string, code: string, expiresAt: Date): Promise<void>;
+  /**
+   * Fired right after `RepaymentsService.recordRepayment` initiates the
+   * REPAYMENT_RECORD workflow — staff-facing, to the branch's current
+   * manager (the review step's actor), same "notify whoever acts next"
+   * posture as BranchOperationalEventListenersService.handleFundingRecorded.
+   * Unlike `sendRepaymentDisputeRaised` above this isn't resolved via
+   * `InvolvedPartiesResolver` (nothing has been reviewed/approved yet at
+   * this point, so there's no acted-by history to look at) — just the
+   * branch's assigned manager, or nobody if the branch's manager slot is
+   * currently empty (logged, not thrown — same as every other branch-
+   * operational notification's empty-recipient handling).
+   */
+  sendRepaymentSubmittedForReview(params: {
+    repaymentRecordId: string;
+    branchId: string;
+    recordedBy: string;
+    amountKobo: number;
   }): Promise<void>;
 }

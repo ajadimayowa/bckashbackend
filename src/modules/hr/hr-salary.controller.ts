@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { ModuleName } from '../../common/enums/identity.enums';
 import { HR_SALARY_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
@@ -21,7 +21,7 @@ import { DecryptedSalary, SalaryService } from './salary.service';
  * that capability's own doc comment: compensation data is gated more
  * tightly than general leave administration.
  */
-@ApiTags('hr')
+@ApiTags('hr-salary')
 @ApiBearerAuth('access-token')
 @Controller('hr/salary')
 export class HrSalaryController {
@@ -29,6 +29,10 @@ export class HrSalaryController {
 
   @Get('mine')
   @UseGuards(JwtAuthGuard, StaffContextGuard)
+  @ApiOperation({
+    summary: 'Get my own current salary',
+    description: 'Always allowed, regardless of HR module access.',
+  })
   getMine(@CurrentStaffContext() actor: ResolvedStaffContext): Promise<DecryptedSalary> {
     return this.salaryService.getCurrentSalary(actor.staffId);
   }
@@ -37,6 +41,11 @@ export class HrSalaryController {
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard, CapabilityGuard)
   @RequireModule(ModuleName.HR)
   @RequireCapability(HR_SALARY_MANAGE_CAPABILITY)
+  @ApiOperation({
+    summary: "Get another staff member's current salary",
+    description:
+      'Requires HR module access AND the salary-management capability (Admin/SuperAdmin).',
+  })
   getForStaff(@Param('staffId') staffId: string): Promise<DecryptedSalary> {
     return this.salaryService.getCurrentSalary(staffId);
   }
@@ -45,6 +54,7 @@ export class HrSalaryController {
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard, CapabilityGuard)
   @RequireModule(ModuleName.HR)
   @RequireCapability(HR_SALARY_MANAGE_CAPABILITY)
+  @ApiOperation({ summary: "Get another staff member's full salary history" })
   getHistoryForStaff(@Param('staffId') staffId: string): Promise<DecryptedSalary[]> {
     return this.salaryService.getSalaryHistory(staffId);
   }
@@ -53,6 +63,11 @@ export class HrSalaryController {
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard, CapabilityGuard)
   @RequireModule(ModuleName.HR)
   @RequireCapability(HR_SALARY_MANAGE_CAPABILITY)
+  @ApiOperation({
+    summary: 'Propose a salary change',
+    description:
+      'Single-step workflow — a different Admin/SuperAdmin must approve. Closes the prior active SalaryRecord and opens a new one once approved.',
+  })
   async propose(
     @Body() dto: ProposeSalaryChangeDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,

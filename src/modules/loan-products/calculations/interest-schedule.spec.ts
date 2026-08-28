@@ -5,41 +5,43 @@ import {
 
 describe('calculateFlatInterestSchedule', () => {
   it('computes total interest and splits principal/interest evenly for a tenure that divides evenly', () => {
-    const result = calculateFlatInterestSchedule(120_000, 1200, 12); // 12% annual, 12 months
-    expect(result.totalInterestKobo).toBe(14_400);
-    expect(result.installmentAmountKobo).toBe(11_200); // (120000/12) + (14400/12)
-    expect(result.schedule).toHaveLength(12);
+    const result = calculateFlatInterestSchedule(365_000, 10_000, 10); // 100% flat, 10 days
+    // 365000 * 10000 / 10000 = 365000 exactly — the full flat rate, not prorated by tenure.
+    expect(result.totalInterestKobo).toBe(365_000);
+    expect(result.installmentAmountKobo).toBe(73_000); // (365000/10) + (365000/10)
+    expect(result.schedule).toHaveLength(10);
     for (const installment of result.schedule) {
-      expect(installment.principalPortion).toBe(10_000);
-      expect(installment.interestPortion).toBe(1_200);
-      expect(installment.totalDue).toBe(11_200);
+      expect(installment.principalPortion).toBe(36_500);
+      expect(installment.interestPortion).toBe(36_500);
+      expect(installment.totalDue).toBe(73_000);
     }
   });
 
   it('sums exactly to principal + totalInterest for a tenure that does NOT divide evenly, absorbing remainder on the last installment', () => {
-    const result = calculateFlatInterestSchedule(100_000, 1000, 3); // 10% annual, 3 months
-    expect(result.totalInterestKobo).toBe(2_500);
+    const result = calculateFlatInterestSchedule(100_000, 1000, 3); // 10% flat, 3 days
+    // 100000 * 1000 / 10000 = 10000 — the full 10%, regardless of the 3-day tenure.
+    expect(result.totalInterestKobo).toBe(10_000);
 
     const sumPrincipal = result.schedule.reduce((acc, i) => acc + i.principalPortion, 0);
     const sumInterest = result.schedule.reduce((acc, i) => acc + i.interestPortion, 0);
     expect(sumPrincipal).toBe(100_000);
-    expect(sumInterest).toBe(2_500);
+    expect(sumInterest).toBe(10_000);
 
     // First two installments get the floored base; the last absorbs the remainder.
     expect(result.schedule[0]!.principalPortion).toBe(33_333);
     expect(result.schedule[1]!.principalPortion).toBe(33_333);
     expect(result.schedule[2]!.principalPortion).toBe(33_334);
-    expect(result.schedule[0]!.interestPortion).toBe(833);
-    expect(result.schedule[1]!.interestPortion).toBe(833);
-    expect(result.schedule[2]!.interestPortion).toBe(834);
+    expect(result.schedule[0]!.interestPortion).toBe(3_333);
+    expect(result.schedule[1]!.interestPortion).toBe(3_333);
+    expect(result.schedule[2]!.interestPortion).toBe(3_334);
   });
 
   it('handles a single-installment tenure', () => {
-    const result = calculateFlatInterestSchedule(50_000, 500, 1); // 5% annual, 1 month
+    const result = calculateFlatInterestSchedule(50_000, 500, 1); // 5% flat, 1 day
     expect(result.schedule).toHaveLength(1);
     expect(result.schedule[0]!.principalPortion).toBe(50_000);
-    // 50000 * 500 * 1 / 120000 = 208.33... -> rounds to 208
-    expect(result.schedule[0]!.interestPortion).toBe(208);
+    // 50000 * 500 / 10000 = 2500 — the full 5% of principal.
+    expect(result.schedule[0]!.interestPortion).toBe(2_500);
     expect(result.installmentAmountKobo).toBe(result.schedule[0]!.totalDue);
   });
 
@@ -69,12 +71,12 @@ describe('calculateFlatInterestSchedule', () => {
     expect(result.schedule.reduce((acc, i) => acc + i.principalPortion, 0)).toBe(90_000);
   });
 
-  it('throws on tenureMonths <= 0 (the zero-tenure edge guard)', () => {
+  it('throws on tenureDays <= 0 (the zero-tenure edge guard)', () => {
     expect(() => calculateFlatInterestSchedule(100_000, 1000, 0)).toThrow(/positive integer/);
     expect(() => calculateFlatInterestSchedule(100_000, 1000, -1)).toThrow(/positive integer/);
   });
 
-  it('throws on a non-integer tenureMonths', () => {
+  it('throws on a non-integer tenureDays', () => {
     expect(() => calculateFlatInterestSchedule(100_000, 1000, 3.5)).toThrow(/positive integer/);
   });
 
@@ -89,7 +91,7 @@ describe('calculateFlatInterestSchedule', () => {
 
 describe('calculateReducingBalanceSchedule', () => {
   it('interest declines installment-over-installment as principal is paid down', () => {
-    const { schedule } = calculateReducingBalanceSchedule(1_000_000, 1_800, 12); // 18% annual, 12 months
+    const { schedule } = calculateReducingBalanceSchedule(1_000_000, 1_800, 12); // 18% flat, 12 days
     for (let i = 1; i < schedule.length; i += 1) {
       expect(schedule[i]!.interestPortion).toBeLessThanOrEqual(schedule[i - 1]!.interestPortion);
     }
@@ -150,7 +152,7 @@ describe('calculateReducingBalanceSchedule', () => {
     expect(schedule[schedule.length - 1]!.closingBalance).toBe(0);
   });
 
-  it('throws on tenureMonths <= 0', () => {
+  it('throws on tenureDays <= 0', () => {
     expect(() => calculateReducingBalanceSchedule(100_000, 1000, 0)).toThrow(/positive integer/);
     expect(() => calculateReducingBalanceSchedule(100_000, 1000, -3)).toThrow(/positive integer/);
   });

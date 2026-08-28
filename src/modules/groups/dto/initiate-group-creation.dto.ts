@@ -1,4 +1,15 @@
-import { ArrayMinSize, IsArray, IsMongoId, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsMongoId,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class InitiateGroupCreationDto {
   @IsString()
@@ -20,4 +31,28 @@ export class InitiateGroupCreationDto {
   @ArrayMinSize(3)
   @IsMongoId({ each: true })
   proposedMemberCustomerIds!: string[];
+
+  // Free-text intake fields — see Group schema's own doc comment for why
+  // proposedLeaderName is informational only, not the real leadership
+  // assignment mechanism.
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  proposedLeaderName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  meetingDay?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  meetingLocation?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  expectedMemberCount?: number;
 }

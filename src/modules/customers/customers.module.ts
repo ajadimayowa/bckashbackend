@@ -8,19 +8,25 @@ import { IdentityModule } from '../identity/identity.module';
 // Cross-module schema registration only — see customer.service.ts's comment
 // and PHASE_3_NOTES.md/PHASE_5_NOTES.md ("cross-module existence checks").
 import { Branch, BranchSchema } from '../branches/schemas/branch.schema';
+import { GroupMembership, GroupMembershipSchema } from '../groups/schemas/group-membership.schema';
+import { Group, GroupSchema } from '../groups/schemas/group.schema';
+import { Staff, StaffSchema } from '../identity/schemas/staff.schema';
 import { CustomerController } from './customer.controller';
 import { CustomerService } from './customer.service';
+import { BvnVerificationPreview, BvnVerificationPreviewSchema } from './schemas/bvn-verification-preview.schema';
 import { Customer, CustomerSchema } from './schemas/customer.schema';
 import { KycRecord, KycRecordSchema } from './schemas/kyc-record.schema';
-import { PendingBvnConsent, PendingBvnConsentSchema } from './schemas/pending-bvn-consent.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Customer.name, schema: CustomerSchema },
       { name: KycRecord.name, schema: KycRecordSchema },
-      { name: PendingBvnConsent.name, schema: PendingBvnConsentSchema },
+      { name: BvnVerificationPreview.name, schema: BvnVerificationPreviewSchema },
       { name: Branch.name, schema: BranchSchema },
+      { name: Staff.name, schema: StaffSchema },
+      { name: Group.name, schema: GroupSchema },
+      { name: GroupMembership.name, schema: GroupMembershipSchema },
     ]),
     BvnIntegrationModule,
     S3IntegrationModule,

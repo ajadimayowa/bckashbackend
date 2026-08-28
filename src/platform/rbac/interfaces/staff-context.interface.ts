@@ -1,15 +1,23 @@
-import { ModuleName, StaffRole } from '../../../common/enums/identity.enums';
+import { ModuleName, StaffRole, StaffUserType } from '../../../common/enums/identity.enums';
 
 /**
  * What an upstream JWT auth guard is expected to attach to `req.user` once the
  * identity module (Phase 3) exists. RBAC depends only on this shape, not on the
  * identity module itself — keeps the dependency direction one-way
  * (identity → rbac, never the reverse).
+ *
+ * `userType` — added for the Initiator/Authorizer RBAC feature (see
+ * StaffUserType's own doc comment). Re-read from the Staff document on
+ * every request by JwtStrategy.validate(), same "live, not a stale JWT
+ * claim" treatment as `status` — a userType change (e.g. an Admin
+ * re-flagged from Initiator to Authorizer) takes effect on the very next
+ * request, not after the access token expires, unlike `role`/`branchId`.
  */
 export interface AuthenticatedStaffPrincipal {
   staffId: string;
   role: StaffRole;
   branchId?: string;
+  userType: StaffUserType;
 }
 
 /**

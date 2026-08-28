@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -6,20 +6,38 @@ import ms from 'ms';
 
 import { StaffStatus } from '../../common/enums/identity.enums';
 import type { JwtConfig } from '../../common/config/configuration';
-import { AuthTokens, JwtPayload } from './interfaces/jwt-payload.interface';
+import { BvnProviderAuthService } from '../../platform/integrations/bvn/bvn-provider-auth.service';
+import { AuthOtpService } from './auth-otp.service';
+import {
+  AuthTokens,
+  JwtPayload,
+  LoginChallengeResponse,
+  LoginResult,
+} from './interfaces/jwt-payload.interface';
 import { RefreshTokenService } from './refresh-token.service';
 import { StaffDocument } from './schemas/staff.schema';
 import { StaffService } from './staff.service';
 
+/**
+ * *** TWO-STEP LOGIN — see AUTH_OTP_* config, AuthOtpService ***
+ * `login()` no longer returns tokens directly — a correct email/password
+ * now only earns a `LoginOtpChallenge` (OTP sent to the staff member's
+ * email and phone). `verifyLoginOtp()` is the only path that actually
+ * issues an access/refresh token pair, mirroring exactly what `login()`
+ * itself used to do at its tail end.
+ */
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly refreshTtlSeconds: number;
 
   constructor(
     private readonly staffService: StaffService,
     private readonly refreshTokenService: RefreshTokenService,
+    private readonly authOtpService: AuthOtpService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly bvnProviderAuthService: BvnProviderAuthService,
   ) {
     const jwtConfig = this.configService.get<JwtConfig>('jwt');
     // `ms` returns milliseconds for a duration string like '7d' — convert once
@@ -40,7 +58,17 @@ export class AuthService {
     return this.jwtService.sign(payload);
   }
 
-  async login(email: string, password: string): Promise<AuthTokens> {
+  private async issueTokens(staff: StaffDocument): Promise<AuthTokens> {
+    const accessToken = this.signAccessToken(staff);
+    const { token: refreshToken } = await this.refreshTokenService.issue(
+      staff._id.toString(),
+      this.refreshTtlSeconds,
+    );
+    return { accessToken, refreshToken };
+  }
+
+  /** Validates credentials + status, then issues an OTP challenge — no tokens yet. */
+  async login(email: string, password: string): Promise<LoginChallengeResponse> {
     const staff = await this.staffService.findByEmailWithPassword(email);
     // Same generic message whether the email doesn't exist or the password is
     // wrong — don't let login responses be used to enumerate valid accounts.
@@ -60,13 +88,68 @@ export class AuthService {
       throw new UnauthorizedException(`Account is not active (status: ${staff.status})`);
     }
 
-    const accessToken = this.signAccessToken(staff);
-    const { token: refreshToken } = await this.refreshTokenService.issue(
-      staff._id.toString(),
-      this.refreshTtlSeconds,
-    );
+    const { challengeId, expiresAt } = await this.authOtpService.issueChallenge(staff);
 
-    return { accessToken, refreshToken };
+    return {
+      challengeId,
+      expiresAt,
+      message: 'An OTP has been sent to your registered email and phone number.',
+    };
+  }
+
+  /**
+   * The only path that actually issues tokens — a verified OTP challenge,
+   * staffId included. `userDetails` on the response is purely a frontend
+   * convenience (routing to the right protected area post-login) — the
+   * access token itself remains the actual authorization artifact; nothing
+   * server-side trusts `userDetails`.
+   */
+  async verifyLoginOtp(challengeId: string, code: string): Promise<LoginResult> {
+    const staffId = await this.authOtpService.verifyChallenge(challengeId, code);
+
+    const staff = await this.staffService.findById(staffId);
+    // Defensive — status could theoretically change in the (short) window
+    // between OTP issuance and verification (e.g. an Admin disables the
+    // account mid-flow). Re-checked here for the same reason `refresh()`
+    // re-checks it below.
+    if (staff.status !== StaffStatus.ACTIVE) {
+      throw new UnauthorizedException(`Account is not active (status: ${staff.status})`);
+    }
+
+    const tokens = await this.issueTokens(staff);
+
+    // Pre-warm the BVN provider session on every successful login rather than
+    // waiting for the first actual BVN call (verifyBvn/verifyBvnPreview) to
+    // pay that login round-trip — cheap no-op if a still-cached session
+    // exists already (see BvnProviderAuthService.getAuthHeaders). Fire-and-
+    // forget: a BVN provider outage must never fail or delay a login.
+    this.bvnProviderAuthService.getAuthHeaders().catch((error: unknown) => {
+      this.logger.warn(
+        `BVN provider pre-warm failed (non-fatal, will retry lazily on next BVN call): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+
+    // Best-effort — see StaffService.recordLogin. A failure here must never
+    // fail or delay the login itself.
+    this.staffService.recordLogin(staffId).catch((error: unknown) => {
+      this.logger.warn(
+        `Failed to record lastLoginAt (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+
+    return {
+      ...tokens,
+      userDetails: {
+        id:staff._id,
+        firstName: staff.firstName,
+        lastName: staff.lastName,
+        userType: staff.userType,
+        userLevel: staff.role,
+        mustChangePassword: staff.mustChangePassword,
+      },
+    };
   }
 
   /** Rotates the refresh token on every use — the old one is revoked, a new one issued. */

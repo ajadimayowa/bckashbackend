@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { ModuleName } from '../../common/enums/identity.enums';
 import { RequireModule } from '../../platform/rbac/decorators/require-module.decorator';
@@ -22,7 +22,7 @@ import { LeaveApplication } from './schemas/leave-application.schema';
  * self-access exemption the brief named only for the two `GET .../mine`-
  * style read endpoints.
  */
-@ApiTags('hr')
+@ApiTags('hr-leave')
 @ApiBearerAuth('access-token')
 @Controller('hr/leave')
 export class HrLeaveController {
@@ -33,6 +33,11 @@ export class HrLeaveController {
 
   @Get('my-balance')
   @UseGuards(JwtAuthGuard, StaffContextGuard)
+  @ApiOperation({
+    summary: 'Get my own leave balances',
+    description:
+      'Always allowed, regardless of HR module access. Optionally a specific year (defaults to the current one).',
+  })
   getMyBalance(
     @CurrentStaffContext() actor: ResolvedStaffContext,
     @Query('year') year?: string,
@@ -44,6 +49,11 @@ export class HrLeaveController {
   @Post('apply')
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard)
   @RequireModule(ModuleName.HR)
+  @ApiOperation({
+    summary: 'Apply for leave',
+    description:
+      "Routed to one of three approval chains depending on your role/branch-manager status. An insufficient balance never blocks submission — it's just flagged for the reviewer.",
+  })
   apply(
     @Body() dto: ApplyForLeaveDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -61,6 +71,11 @@ export class HrLeaveController {
   @Post(':id/cancel')
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard)
   @RequireModule(ModuleName.HR)
+  @ApiOperation({
+    summary: 'Cancel a leave application',
+    description:
+      'Before approval: the applicant or an Admin/SuperAdmin. After approval: Admin/SuperAdmin only, and reverses the balance.',
+  })
   cancel(
     @Param('id') id: string,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -74,6 +89,10 @@ export class HrLeaveController {
   @Get('staff/:staffId/balance')
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard)
   @RequireModule(ModuleName.HR)
+  @ApiOperation({
+    summary: "Get another staff member's leave balances",
+    description: 'Only standard HR module access needed — not gated further.',
+  })
   getStaffBalance(
     @Param('staffId') staffId: string,
     @Query('year') year?: string,
@@ -85,6 +104,7 @@ export class HrLeaveController {
   @Get('staff/:staffId/applications')
   @UseGuards(JwtAuthGuard, StaffContextGuard, ModuleAccessGuard)
   @RequireModule(ModuleName.HR)
+  @ApiOperation({ summary: "List another staff member's leave applications" })
   getStaffApplications(@Param('staffId') staffId: string): Promise<LeaveApplication[]> {
     return this.leaveApplicationService.findForStaff(staffId);
   }

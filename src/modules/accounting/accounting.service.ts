@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
 import { AccountMappingKey, AccountType } from '../../common/enums/accounting.enums';
+import { compactFilter } from '../../common/utils/compact-filter.util';
 import { AccountMapping, AccountMappingDocument } from './schemas/account-mapping.schema';
 import { Account, AccountDocument } from './schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
@@ -213,7 +214,12 @@ export class AccountingService implements OnModuleInit {
   async findAllAccounts(
     filter: { type?: AccountType; active?: boolean } = {},
   ): Promise<AccountDocument[]> {
-    return this.accountModel.find(filter).sort({ code: 1 }).exec();
+    // See compactFilter's own doc comment — an absent `?type=`/`?active=`
+    // query param comes through as `undefined`, and Mongoose treats
+    // `{ type: undefined }` as an actual (never-true) constraint, not "no
+    // filter" — this silently returned `[]` for GET /accounting/accounts
+    // whenever called without both filters.
+    return this.accountModel.find(compactFilter(filter)).sort({ code: 1 }).exec();
   }
 
   private isDuplicateKeyError(error: unknown): boolean {

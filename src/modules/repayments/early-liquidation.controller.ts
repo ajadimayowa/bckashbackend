@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { WorkflowEntityType } from '../../common/enums/workflow.enums';
 import { initiateCapability } from '../../platform/rbac/constants/capabilities';
@@ -28,6 +28,10 @@ export class EarlyLiquidationController {
 
   @Post()
   @RequireCapability(INITIATE_EARLY_LIQUIDATION)
+  @ApiOperation({
+    summary: 'Initiate paying off a loan ahead of schedule',
+    description: 'Locks in a fee/balance snapshot at request time.',
+  })
   async initiate(
     @Body() dto: InitiateEarlyLiquidationDto,
     @CurrentStaffContext() actor: ResolvedStaffContext,
@@ -44,6 +48,10 @@ export class EarlyLiquidationController {
   // separate approval-level decision. See PHASE_9_NOTES.md.
   @Post(':repaymentId/link')
   @RequireCapability(INITIATE_REPAYMENT)
+  @ApiOperation({
+    summary: 'Link a repayment record to an approved early-liquidation request',
+    description: 'Marks the liquidation complete once the linked repayment covers the full amount.',
+  })
   linkRepayment(
     @Param('repaymentId') repaymentId: string,
     @Body() dto: LinkRepaymentToLiquidationDto,
@@ -55,6 +63,7 @@ export class EarlyLiquidationController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get an early-liquidation request by id' })
   findOne(@Param('id') id: string): Promise<EarlyLiquidationRequest> {
     return this.earlyLiquidationService.findByIdOrThrow(id);
   }

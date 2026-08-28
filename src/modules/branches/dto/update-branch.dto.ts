@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class UpdateBranchDto {
   @IsOptional()
@@ -17,6 +17,16 @@ export class UpdateBranchDto {
   @IsString()
   @MaxLength(240)
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{11}$/, { message: 'phone must be exactly 11 digits' })
+  phone?: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(180)
+  email?: string;
 
   @IsOptional()
   @IsBoolean()

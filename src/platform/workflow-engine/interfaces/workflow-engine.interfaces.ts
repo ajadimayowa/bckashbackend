@@ -1,3 +1,4 @@
+import { StaffRole } from '../../../common/enums/identity.enums';
 import { WorkflowStepAction } from '../../../common/enums/workflow.enums';
 
 export interface WorkflowStepConfigInput {
@@ -23,6 +24,18 @@ export interface RegisterChainConfigInput {
 export interface ActingStaff {
   staffId: string;
   capabilities: string[];
+  /**
+   * Optional — the engine's own capability check never needs this (see this
+   * interface's own doc comment above), but a `PreApprovalValidator` a
+   * domain module registers sometimes does (e.g. StaffService's STAFF/CREATE
+   * validator, which requires the approver's `role` to match the request's
+   * initiator's role — the Initiator/Authorizer RBAC feature's same-role
+   * peer-matching rule; see StaffService.onModuleInit). Only populated by
+   * the one call site that matters (WorkflowRequestsController.act, the
+   * generic `act` endpoint — every STAFF approval goes through it) rather
+   * than threaded through every caller that builds an ActingStaff.
+   */
+  role?: StaffRole;
 }
 
 export interface InitiateWorkflowInput {
@@ -52,6 +65,12 @@ export interface ActOnWorkflowInput {
 }
 
 export interface ResubmitWorkflowInput {
+  workflowRequestId: string;
+  actorId: string;
+  newPayload: Record<string, unknown>;
+}
+
+export interface UpdatePendingPayloadInput {
   workflowRequestId: string;
   actorId: string;
   newPayload: Record<string, unknown>;

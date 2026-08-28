@@ -11,12 +11,16 @@ import {
   BranchBankAccount,
   BranchBankAccountSchema,
 } from '../branches/schemas/branch-bank-account.schema';
+import { CustomersModule } from '../customers/customers.module';
+import { GroupsModule } from '../groups/groups.module';
 import { IdentityModule } from '../identity/identity.module';
 // LoansModule (not just LoanProductsModule) is imported so this module can
 // reuse the exact same LEDGER_POSTING_PORT/NOTIFICATION_PORT bound singleton
 // Phase 8 already wired up, rather than registering a second, separately
 // rebound instance of the same conceptual port — see loans.module.ts's
-// export comment and PHASE_9_NOTES.md.
+// export comment and PHASE_9_NOTES.md. Also gives LoanDetailService access
+// to LoansService/LoanVerificationService — see that class's own doc comment
+// for why the loan-detail composition lives here rather than in LoansModule.
 import { LoansModule } from '../loans/loans.module';
 import {
   MemberLoanAccount,
@@ -24,8 +28,14 @@ import {
 } from '../loans/schemas/member-loan-account.schema';
 import { Loan, LoanSchema } from '../loans/schemas/loan.schema';
 import { LoanProductsModule } from '../loan-products/loan-products.module';
+import { CustomerRiskController } from './customer-risk.controller';
+import { CustomerRiskService } from './customer-risk.service';
 import { EarlyLiquidationController } from './early-liquidation.controller';
 import { EarlyLiquidationService } from './early-liquidation.service';
+import { LoanDetailController, RepaymentsListController } from './loan-detail.controller';
+import { LoanDetailService } from './loan-detail.service';
+import { LoanReportsController } from './loan-reports.controller';
+import { LoanReportsService } from './loan-reports.service';
 import { PenaltySweepProcessor } from './penalty-sweep.processor';
 import { PENALTY_SWEEP_QUEUE } from './penalty-sweep.queue';
 import { PenaltySweepService } from './penalty-sweep.service';
@@ -58,15 +68,27 @@ import { RepaymentRecord, RepaymentRecordSchema } from './schemas/repayment-reco
     S3IntegrationModule,
     LoansModule,
     LoanProductsModule,
+    GroupsModule,
+    CustomersModule,
     IdentityModule,
   ],
-  controllers: [RepaymentsController, EarlyLiquidationController],
+  controllers: [
+    RepaymentsController,
+    EarlyLiquidationController,
+    LoanDetailController,
+    RepaymentsListController,
+    CustomerRiskController,
+    LoanReportsController,
+  ],
   providers: [
     RepaymentsService,
     EarlyLiquidationService,
     PenaltySweepService,
     PenaltySweepProcessor,
+    LoanDetailService,
+    CustomerRiskService,
+    LoanReportsService,
   ],
-  exports: [RepaymentsService, EarlyLiquidationService, PenaltySweepService],
+  exports: [RepaymentsService, EarlyLiquidationService, PenaltySweepService, CustomerRiskService],
 })
 export class RepaymentsModule {}

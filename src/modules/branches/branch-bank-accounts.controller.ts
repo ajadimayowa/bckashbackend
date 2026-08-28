@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { BRANCH_MANAGE_ACCOUNTS_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -15,26 +15,41 @@ import { BranchBankAccount } from './schemas/branch-bank-account.schema';
 @ApiBearerAuth('access-token')
 @Controller('bank-accounts')
 @UseGuards(JwtAuthGuard, StaffContextGuard, CapabilityGuard)
-@RequireCapability(BRANCH_MANAGE_ACCOUNTS_CAPABILITY)
 export class BranchBankAccountsController {
   constructor(private readonly bankAccountsService: BranchBankAccountsService) {}
 
   @Post()
+  @RequireCapability(BRANCH_MANAGE_ACCOUNTS_CAPABILITY)
+  @ApiOperation({ summary: 'Add a bank account for a branch' })
   create(@Body() dto: CreateBranchBankAccountDto): Promise<BranchBankAccount> {
     return this.bankAccountsService.create(dto);
   }
 
+  // Reads: authenticated-only, no capability gate — same reasoning as
+  // Groups/Loans/LoanProducts' own read endpoints. Anyone recording a
+  // repayment (INITIATE_REPAYMENT — Marketer/Manager) needs to see which
+  // account to attribute it to, not just Admin/SuperAdmin.
   @Get()
-  findAll(@Query('branchId') branchId?: string): Promise<BranchBankAccount[]> {
-    return this.bankAccountsService.findAll(branchId);
+  @ApiOperation({
+    summary: 'List bank accounts',
+    description: 'Optionally filter to one branch and/or to only the currently active one.',
+  })
+  findAll(
+    @Query('branchId') branchId?: string,
+    @Query('active') active?: string,
+  ): Promise<BranchBankAccount[]> {
+    return this.bankAccountsService.findAll(branchId, active === undefined ? undefined : active === 'true');
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a bank account by id' })
   findOne(@Param('id') id: string): Promise<BranchBankAccount> {
     return this.bankAccountsService.findById(id);
   }
 
   @Patch(':id')
+  @RequireCapability(BRANCH_MANAGE_ACCOUNTS_CAPABILITY)
+  @ApiOperation({ summary: 'Update a bank account' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateBranchBankAccountDto,

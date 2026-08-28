@@ -47,6 +47,21 @@ export class RepaymentScheduleEntry {
 
 export const RepaymentScheduleEntrySchema = SchemaFactory.createForClass(RepaymentScheduleEntry);
 
+/** Required on a MemberLoanAccount iff disbursementChannel is TRANSFER — no bank-lookup provider is wired up yet (see BankTransferPort's own doc comment), so this is exactly what the marketer typed in at application time. */
+@Schema({ _id: false })
+export class BankAccountDetails {
+  @Prop({ type: String, required: true, trim: true })
+  accountName!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  accountNumber!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  bankName!: string;
+}
+
+export const BankAccountDetailsSchema = SchemaFactory.createForClass(BankAccountDetails);
+
 /**
  * One member's slice of a Loan. Created (status: PENDING, no schedule) alongside
  * the parent Loan in `LoansService.raiseApplication` — see Loan's own doc comment
@@ -70,6 +85,14 @@ export class MemberLoanAccount {
 
   @Prop({ type: String, enum: DisbursementChannel, required: true })
   disbursementChannel!: DisbursementChannel;
+
+  /** Required iff disbursementChannel is TRANSFER — see BankAccountDetails's own doc comment. */
+  @Prop({ type: BankAccountDetailsSchema, default: null })
+  bankAccountDetails!: BankAccountDetails | null;
+
+  /** A photo of the customer taken at application time — see LoansService.raiseApplication and buildLoanApplicantPhotoObjectKey. Optional: uploaded via a follow-up call, not required to raise the application itself. */
+  @Prop({ type: String, default: null })
+  applicantPhotoImageKey!: string | null;
 
   @Prop({ type: [RepaymentScheduleEntrySchema], default: [] })
   schedule!: RepaymentScheduleEntry[];

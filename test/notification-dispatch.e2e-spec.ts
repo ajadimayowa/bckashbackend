@@ -141,7 +141,7 @@ describe('Notification dispatch (e2e, live Redis)', () => {
         .spyOn(smsAdapter, 'send')
         .mockResolvedValue({ success: true, messageId: 'x' });
 
-      await port.sendLoanRaisedNotification(customer._id.toString(), 50_000, 200_000, new Date());
+      await port.sendLoanRaisedNotification(customer._id.toString(), 50_000, new Date());
 
       await waitUntil(() => sendSpy.mock.calls.length > 0);
       const pendingCount = await pendingLogModel.countDocuments({}).exec();

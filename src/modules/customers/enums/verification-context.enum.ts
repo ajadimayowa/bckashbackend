@@ -11,4 +11,6 @@ export enum VerificationContext {
   KYC_CAPTURE = 'KYC_CAPTURE',
   PRE_DISBURSEMENT = 'PRE_DISBURSEMENT',
   CHEQUE_PICKUP = 'CHEQUE_PICKUP',
+  /** A reviewer (Manager) or approver re-checking the stored BVN details against the live provider before acting on a submission. */
+  REVIEW_RECHECK = 'REVIEW_RECHECK',
 }

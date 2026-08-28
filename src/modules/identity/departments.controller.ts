@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { ORG_MANAGE_CAPABILITY } from '../../platform/rbac/constants/capabilities';
 import { RequireCapability } from '../../platform/rbac/decorators/require-capability.decorator';
@@ -7,9 +7,10 @@ import { CapabilityGuard } from '../../platform/rbac/guards/capability.guard';
 import { StaffContextGuard } from '../../platform/rbac/guards/staff-context.guard';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
+import { DepartmentResponseDto } from './dto/department-response.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { Department } from './schemas/department.schema';
+import { DepartmentDocument } from './schemas/department.schema';
 
 /**
  * Plain Admin/SuperAdmin CRUD — deliberately not workflow-mediated. See
@@ -24,23 +25,51 @@ import { Department } from './schemas/department.schema';
 export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
+  private async toResponse(department: DepartmentDocument): Promise<DepartmentResponseDto> {
+    const staffCount = await this.departmentsService.countStaff(department._id.toString());
+    return DepartmentResponseDto.fromDocument(department, staffCount);
+  }
+
   @Post()
-  create(@Body() dto: CreateDepartmentDto): Promise<Department> {
-    return this.departmentsService.create(dto);
+  @ApiOperation({ summary: 'Create a department' })
+  async create(@Body() dto: CreateDepartmentDto): Promise<DepartmentResponseDto> {
+    const department = await this.departmentsService.create(dto);
+    return this.toResponse(department);
   }
 
   @Get()
-  findAll(): Promise<Department[]> {
-    return this.departmentsService.findAll();
+  @ApiOperation({ summary: 'List every department', description: 'Each department includes a real, aggregated staffCount.' })
+  async findAll(): Promise<DepartmentResponseDto[]> {
+    const departments = await this.departmentsService.findAll();
+    const staffCounts = await this.departmentsService.countStaffByDepartment(
+      departments.map((department) => department._id.toString()),
+    );
+    return departments.map((department) =>
+      DepartmentResponseDto.fromDocument(department, staffCounts.get(department._id.toString()) ?? 0),
+    );
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Promise<Department> {
-    return this.departmentsService.findById(id);
+  @ApiOperation({ summary: 'Get a department by id' })
+  async findOne(@Param('id') id: string): Promise<DepartmentResponseDto> {
+    const department = await this.departmentsService.findById(id);
+    return this.toResponse(department);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateDepartmentDto): Promise<Department> {
-    return this.departmentsService.update(id, dto);
+  @ApiOperation({ summary: 'Update a department' })
+  async update(@Param('id') id: string, @Body() dto: UpdateDepartmentDto): Promise<DepartmentResponseDto> {
+    const department = await this.departmentsService.update(id, dto);
+    return this.toResponse(department);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Hard-delete a department',
+    description: 'Only while nothing (staff, units) still references it.',
+  })
+  async remove(@Param('id') id: string): Promise<{ deleted: true }> {
+    await this.departmentsService.remove(id);
+    return { deleted: true };
   }
 }

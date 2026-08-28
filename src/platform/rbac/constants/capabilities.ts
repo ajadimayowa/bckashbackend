@@ -104,6 +104,18 @@ export const LEAVE_CANCEL_APPROVED_CAPABILITY = 'leave:cancel_approved';
  */
 export const HR_LEAVE_TYPES_MANAGE_CAPABILITY = 'hr:leave_types:manage';
 
+/**
+ * Gates creating/updating the singleton Organisation profile (company name,
+ * address, bank accounts, CAC doc, ...) — SuperAdmin only, same "highest-
+ * privilege bootstrap action" reasoning as `STAFF_CREATE_DIRECT_CAPABILITY`.
+ * Deliberately distinct from `ORG_MANAGE_CAPABILITY` above, which is about
+ * *org structure* (Department/Unit/Branch CRUD, ADMIN+SUPERADMIN) — this one
+ * is about the *company's own profile*, a single document, SuperAdmin-only.
+ * Reading it needs no capability at all (any authenticated staff) — see
+ * OrganisationController.
+ */
+export const ORGANISATION_MANAGE_CAPABILITY = 'organisation:manage';
+
 export const ALL_WORKFLOW_ENTITY_TYPES: readonly WorkflowEntityType[] =
   Object.values(WorkflowEntityType);
 
@@ -136,6 +148,7 @@ export const ALL_KNOWN_CAPABILITIES: readonly string[] = [
   LOAN_DISBURSEMENT_OPS_CAPABILITY,
   ACCOUNTING_MANAGE_CAPABILITY,
   NOTIFICATIONS_MANAGE_CAPABILITY,
+  ORGANISATION_MANAGE_CAPABILITY,
   HR_SALARY_MANAGE_CAPABILITY,
   LEAVE_CANCEL_APPROVED_CAPABILITY,
   HR_LEAVE_TYPES_MANAGE_CAPABILITY,

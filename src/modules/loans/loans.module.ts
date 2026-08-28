@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { RekognitionIntegrationModule } from '../../platform/integrations/rekognition/rekognition.module';
+import { S3IntegrationModule } from '../../platform/integrations/s3/s3.module';
 import { WorkflowEngineModule } from '../../platform/workflow-engine/workflow-engine.module';
 // LoansModule imports full modules for every dependency (GroupsService,
 // LoanProductsService/FeeDefinitionsService, CustomerService,
@@ -26,6 +27,7 @@ import { FeePaymentsService } from './fee-payments.service';
 import { BANK_TRANSFER_PORT } from './interfaces/bank-transfer-port.interface';
 import { LEDGER_POSTING_PORT } from './interfaces/ledger-posting-port.interface';
 import { NOTIFICATION_PORT } from './interfaces/notification-port.interface';
+import { LoanConsentService } from './loan-consent.service';
 import { LoanVerificationController } from './loan-verification.controller';
 import { LoanVerificationService } from './loan-verification.service';
 import { LoansController } from './loans.controller';
@@ -35,6 +37,10 @@ import {
   DisbursementVerificationSchema,
 } from './schemas/disbursement-verification.schema';
 import { FeePayment, FeePaymentSchema } from './schemas/fee-payment.schema';
+import {
+  LoanConsentChallenge,
+  LoanConsentChallengeSchema,
+} from './schemas/loan-consent-challenge.schema';
 import { MemberLoanAccount, MemberLoanAccountSchema } from './schemas/member-loan-account.schema';
 import { Loan, LoanSchema } from './schemas/loan.schema';
 
@@ -46,9 +52,11 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
       { name: DisbursementVerification.name, schema: DisbursementVerificationSchema },
       { name: FeePayment.name, schema: FeePaymentSchema },
       { name: Customer.name, schema: CustomerSchema },
+      { name: LoanConsentChallenge.name, schema: LoanConsentChallengeSchema },
     ]),
     WorkflowEngineModule,
     RekognitionIntegrationModule,
+    S3IntegrationModule,
     GroupsModule,
     LoanProductsModule,
     CustomersModule,
@@ -67,6 +75,7 @@ import { Loan, LoanSchema } from './schemas/loan.schema';
     LoansService,
     LoanVerificationService,
     FeePaymentsService,
+    LoanConsentService,
     // *** LEDGER_POSTING_PORT rebound to the real implementation in Phase 10
     // — see PHASE_10_NOTES.md. NOTIFICATION_PORT rebound to the real
     // implementation in Phase 11 — see PHASE_11_NOTES.md for confirmation

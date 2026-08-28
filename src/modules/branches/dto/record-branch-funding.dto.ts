@@ -12,6 +12,10 @@ export class RecordBranchFundingDto {
   @IsMongoId()
   branchId!: string;
 
+  /** Must be this branch's currently-*active* bank account — see BranchFundingService.recordFunding. */
+  @IsMongoId()
+  bankAccountId!: string;
+
   /** Kobo — integer, never a float (project-wide convention). */
   @IsInt()
   @IsPositive()

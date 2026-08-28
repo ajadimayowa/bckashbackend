@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { decryptPii, encryptPii } from '../../common/crypto/pii-encryption';
+import { decryptPii, encryptPii, hashPii } from '../../common/crypto/pii-encryption';
 
 /**
  * DI-friendly wrapper around common/crypto/pii-encryption.ts's pure
@@ -22,5 +22,10 @@ export class EncryptionService {
 
   decrypt(ciphertext: string): string {
     return decryptPii(ciphertext);
+  }
+
+  /** Deterministic — for uniqueness lookups only, never reversible. See pii-encryption.ts's own doc comment. */
+  hash(plaintext: string): string {
+    return hashPii(plaintext);
   }
 }

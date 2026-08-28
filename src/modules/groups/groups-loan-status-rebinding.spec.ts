@@ -11,6 +11,7 @@ import { CustomerStatus, KycStatus } from '../../common/enums/customer.enums';
 import { MemberLoanAccountStatus } from '../../common/enums/loan.enums';
 import { WorkflowEntityType, WorkflowStepAction } from '../../common/enums/workflow.enums';
 import { InMemoryMongo } from '../../test-utils/in-memory-mongo';
+import { testAwsConfigModule } from '../../test-utils/test-aws-config.module';
 import { AuditModule } from '../../platform/audit/audit.module';
 import { EncryptionService } from '../../platform/encryption/encryption.service';
 import { BvnCallLogService } from '../../platform/integrations/bvn/bvn-call-log.service';
@@ -35,13 +36,11 @@ import {
 } from '../../platform/workflow-engine/schemas/workflow-request.schema';
 import { WorkflowEngineService } from '../../platform/workflow-engine/workflow-engine.service';
 import { Branch, BranchDocument, BranchSchema } from '../branches/schemas/branch.schema';
+import { Staff, StaffSchema } from '../identity/schemas/staff.schema';
 import { CustomerService } from '../customers/customer.service';
 import { Customer, CustomerDocument, CustomerSchema } from '../customers/schemas/customer.schema';
 import { KycRecord, KycRecordSchema } from '../customers/schemas/kyc-record.schema';
-import {
-  PendingBvnConsent,
-  PendingBvnConsentSchema,
-} from '../customers/schemas/pending-bvn-consent.schema';
+import { BvnVerificationPreview, BvnVerificationPreviewSchema } from '../customers/schemas/bvn-verification-preview.schema';
 import {
   MemberLoanAccount,
   MemberLoanAccountDocument,
@@ -107,14 +106,20 @@ describe('GroupsService — LoanStatusPort rebinding (Phase 8)', () => {
 
     moduleRef = await Test.createTestingModule({
       imports: [
+        // CustomerService now needs a global ConfigService (added for
+        // CUSTOMER_ENFORCE_UNIQUE_PHONE — see customer.service.ts's own
+        // constructor) — reused here the same way loans.service.spec.ts
+        // already does, for CustomerService's own S3_ADAPTER dependency.
+        await testAwsConfigModule(),
         MongooseModule.forRoot(mongo.getUri()),
         MongooseModule.forFeature([
           { name: Group.name, schema: GroupSchema },
           { name: GroupMembership.name, schema: GroupMembershipSchema },
           { name: Branch.name, schema: BranchSchema },
+          { name: Staff.name, schema: StaffSchema },
           { name: Customer.name, schema: CustomerSchema },
           { name: KycRecord.name, schema: KycRecordSchema },
-          { name: PendingBvnConsent.name, schema: PendingBvnConsentSchema },
+          { name: BvnVerificationPreview.name, schema: BvnVerificationPreviewSchema },
           { name: WorkflowChainConfig.name, schema: WorkflowChainConfigSchema },
           { name: WorkflowRequest.name, schema: WorkflowRequestSchema },
           { name: BvnCallLog.name, schema: BvnCallLogSchema },

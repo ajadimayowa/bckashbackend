@@ -13,6 +13,7 @@ import {
   SMS_ADAPTER,
   SmsAdapter,
 } from '../../platform/integrations/termii/interfaces/sms-adapter.interface';
+import { NotificationInboxService } from './notification-inbox.service';
 import {
   NOTIFICATION_DISPATCH_QUEUE,
   NotificationDispatchJobData,
@@ -41,6 +42,7 @@ export class NotificationDispatchProcessor extends WorkerHost {
     @Inject(EMAIL_ADAPTER) private readonly emailAdapter: EmailAdapter,
     @Inject(SMS_ADAPTER) private readonly smsAdapter: SmsAdapter,
     private readonly templateRegistry: NotificationTemplateRegistry,
+    private readonly notificationInboxService: NotificationInboxService,
     @InjectModel(NotificationDeadLetterLog.name)
     private readonly deadLetterModel: Model<NotificationDeadLetterLogDocument>,
   ) {
@@ -48,8 +50,33 @@ export class NotificationDispatchProcessor extends WorkerHost {
   }
 
   async process(job: Job<NotificationDispatchJobData>): Promise<void> {
-    const { type, recipient, payload } = job.data;
+    const { type, recipient, payload, sourceEntityId, category, branchId } = job.data;
     const template = this.templateRegistry.getTemplate(type as NotificationTrigger);
+
+    // In-app persistence — additive, never lets a failure here affect the
+    // email/SMS legs below (or vice versa: this runs regardless of whether
+    // either channel is even attempted, e.g. a staff member with no email
+    // on file still gets the bell copy). Staff-only — persistCopies itself
+    // no-ops for a CUSTOMER recipient, see its own doc comment.
+    await this.notificationInboxService
+      .persistCopies({
+        type: type as NotificationTrigger,
+        sourceEntityId,
+        category,
+        branchId,
+        title: template.inAppTitle?.(payload) ?? template.emailSubject?.(payload) ?? type,
+        // Never emailBody — that renders full branded HTML, unsuitable for
+        // a plain-text in-app card. smsBody is already short plain text.
+        body: template.inAppBody?.(payload) ?? template.smsBody?.(payload) ?? '',
+        primaryRecipientStaffId: recipient.kind === 'STAFF' ? recipient.id : null,
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `Notification ${type} for recipient ${recipient.id}: failed to persist in-app copy — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
 
     if (!recipient.email && !recipient.phone) {
       this.logger.warn(

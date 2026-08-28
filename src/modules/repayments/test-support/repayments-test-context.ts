@@ -25,10 +25,7 @@ import { AuditLog, AuditLogDocument } from '../../../platform/audit/schemas/audi
 import { EncryptionService } from '../../../platform/encryption/encryption.service';
 import { BvnCallLogService } from '../../../platform/integrations/bvn/bvn-call-log.service';
 import { BVN_VERIFICATION_ADAPTER } from '../../../platform/integrations/bvn/interfaces/bvn-verification-adapter.interface';
-import {
-  MOCK_BVN_OTP,
-  MockBvnVerificationAdapter,
-} from '../../../platform/integrations/bvn/mock-bvn-verification.adapter';
+import { MockBvnVerificationAdapter } from '../../../platform/integrations/bvn/mock-bvn-verification.adapter';
 import {
   BvnCallLog,
   BvnCallLogSchema,
@@ -68,15 +65,16 @@ import {
 import { Branch, BranchDocument, BranchSchema } from '../../branches/schemas/branch.schema';
 import { CustomerService } from '../../customers/customer.service';
 import {
+  BvnVerificationPreview,
+  BvnVerificationPreviewSchema,
+} from '../../customers/schemas/bvn-verification-preview.schema';
+import {
   Customer,
   CustomerDocument,
   CustomerSchema,
 } from '../../customers/schemas/customer.schema';
 import { KycRecord, KycRecordSchema } from '../../customers/schemas/kyc-record.schema';
-import {
-  PendingBvnConsent,
-  PendingBvnConsentSchema,
-} from '../../customers/schemas/pending-bvn-consent.schema';
+import { Staff, StaffSchema } from '../../identity/schemas/staff.schema';
 import { CreateFeeDefinitionDto } from '../../loan-products/dto/create-fee-definition.dto';
 import { CreateLoanProductDto } from '../../loan-products/dto/create-loan-product.dto';
 import { FeeDefinitionsService } from '../../loan-products/fee-definitions.service';
@@ -104,9 +102,14 @@ import { BANK_TRANSFER_PORT } from '../../loans/interfaces/bank-transfer-port.in
 import { LEDGER_POSTING_PORT } from '../../loans/interfaces/ledger-posting-port.interface';
 import { NOTIFICATION_PORT } from '../../loans/interfaces/notification-port.interface';
 import { StubLedgerPostingPort } from '../../loans/ledger/stub-ledger-posting.port';
+import { LoanConsentService } from '../../loans/loan-consent.service';
 import { LoanVerificationService } from '../../loans/loan-verification.service';
 import { LoansService } from '../../loans/loans.service';
 import { PendingNotificationLogPort } from '../../loans/notifications/pending-notification-log.port';
+import {
+  LoanConsentChallenge,
+  LoanConsentChallengeSchema,
+} from '../../loans/schemas/loan-consent-challenge.schema';
 import {
   PendingNotificationLog,
   PendingNotificationLogDocument,
@@ -123,7 +126,9 @@ import {
   MemberLoanAccountSchema,
 } from '../../loans/schemas/member-loan-account.schema';
 import { Loan, LoanDocument, LoanSchema } from '../../loans/schemas/loan.schema';
+import { CustomerRiskService } from '../customer-risk.service';
 import { EarlyLiquidationService } from '../early-liquidation.service';
+import { LoanDetailService } from '../loan-detail.service';
 import { PenaltySweepService } from '../penalty-sweep.service';
 import { RepaymentsService } from '../repayments.service';
 import {
@@ -165,7 +170,10 @@ export interface RepaymentsTestContext {
   repaymentsService: RepaymentsService;
   earlyLiquidationService: EarlyLiquidationService;
   penaltySweepService: PenaltySweepService;
+  customerRiskService: CustomerRiskService;
+  loanDetailService: LoanDetailService;
   loansService: LoansService;
+  loanConsentService: LoanConsentService;
   loanVerificationService: LoanVerificationService;
   groupsService: GroupsService;
   loanProductsService: LoanProductsService;
@@ -229,8 +237,9 @@ export async function createRepaymentsTestContext(): Promise<RepaymentsTestConte
         { name: BranchBankAccount.name, schema: BranchBankAccountSchema },
         { name: BranchFundBalance.name, schema: BranchFundBalanceSchema },
         { name: Customer.name, schema: CustomerSchema },
+        { name: Staff.name, schema: StaffSchema },
         { name: KycRecord.name, schema: KycRecordSchema },
-        { name: PendingBvnConsent.name, schema: PendingBvnConsentSchema },
+        { name: BvnVerificationPreview.name, schema: BvnVerificationPreviewSchema },
         { name: BvnCallLog.name, schema: BvnCallLogSchema },
         { name: FaceComparisonCallLog.name, schema: FaceComparisonCallLogSchema },
         { name: LoanProduct.name, schema: LoanProductSchema },
@@ -238,6 +247,7 @@ export async function createRepaymentsTestContext(): Promise<RepaymentsTestConte
         { name: WorkflowChainConfig.name, schema: WorkflowChainConfigSchema },
         { name: WorkflowRequest.name, schema: WorkflowRequestSchema },
         { name: PendingNotificationLog.name, schema: PendingNotificationLogSchema },
+        { name: LoanConsentChallenge.name, schema: LoanConsentChallengeSchema },
       ]),
       AuditModule,
       EventEmitterModule.forRoot(),
@@ -247,7 +257,10 @@ export async function createRepaymentsTestContext(): Promise<RepaymentsTestConte
       RepaymentsService,
       EarlyLiquidationService,
       PenaltySweepService,
+      CustomerRiskService,
+      LoanDetailService,
       LoansService,
+      LoanConsentService,
       LoanVerificationService,
       FeePaymentsService,
       GroupsService,
@@ -281,7 +294,10 @@ export async function createRepaymentsTestContext(): Promise<RepaymentsTestConte
     repaymentsService: moduleRef.get(RepaymentsService),
     earlyLiquidationService: moduleRef.get(EarlyLiquidationService),
     penaltySweepService: moduleRef.get(PenaltySweepService),
+    customerRiskService: moduleRef.get(CustomerRiskService),
+    loanDetailService: moduleRef.get(LoanDetailService),
     loansService: moduleRef.get(LoansService),
+    loanConsentService: moduleRef.get(LoanConsentService),
     loanVerificationService: moduleRef.get(LoanVerificationService),
     groupsService: moduleRef.get(GroupsService),
     loanProductsService: moduleRef.get(LoanProductsService),
@@ -382,23 +398,30 @@ export async function createCustomer(
   return customer._id.toString();
 }
 
+/**
+ * Also fast-forwards `status` straight to ACTIVE (bypassing the customer's
+ * own review/approve workflow, not what these repayment-focused tests
+ * exercise) — GroupsService's pre-approval validator now requires every
+ * proposed member to be an ACTIVE customer before a group can be approved,
+ * and every caller here immediately builds a group out of these customers.
+ */
 export async function createVerifiedCustomerWithBiometrics(
   ctx: RepaymentsTestContext,
 ): Promise<string> {
   customerCounter += 1;
   const bvn = `${10_000_000_000 + customerCounter}`.slice(0, 11);
-  const { pendingConsentId } = await ctx.customerService.startBvnConsent(
+  const { customer } = await ctx.customerService.verifyBvnAndCreateCustomer(
     bvn,
-    ctx.INITIATOR_ID,
     ctx.branchId,
+    ctx.INITIATOR_ID,
   );
-  const customer = await ctx.customerService.confirmBvnConsent(pendingConsentId, MOCK_BVN_OTP);
   await ctx.customerService.captureBiometric(
     customer._id.toString(),
     Buffer.from(`biometric-${customerCounter}`),
     'image/jpeg',
     ctx.INITIATOR_ID,
   );
+  await ctx.customerModel.updateOne({ _id: customer._id }, { $set: { status: CustomerStatus.ACTIVE } }).exec();
   return customer._id.toString();
 }
 
@@ -471,7 +494,7 @@ export function productDto(overrides: Partial<CreateLoanProductDto> = {}): Creat
     name: `Product-${Date.now()}-${Math.random()}`,
     interestRate: 1_800,
     interestType: InterestType.FLAT,
-    tenureOptions: [6, 12],
+    tenureOptions: [14, 30],
     minGroupSize: 3,
     feeIds: [],
     approvalChainSteps: [
@@ -535,6 +558,9 @@ export async function raiseApproveVerifyAndDisburseLoan(
     n?: number;
     memberPrincipalKobo?: number;
     productOverrides?: Partial<CreateLoanProductDto>;
+    purpose?: string;
+    /** Applied to every member — defaults to TRANSFER. Set to CHEQUE_PICKUP to exercise the confirmChequeHandover/grace-buffer path. */
+    disbursementChannel?: DisbursementChannel;
   } = {},
 ): Promise<{
   groupId: string;
@@ -553,6 +579,23 @@ export async function raiseApproveVerifyAndDisburseLoan(
   );
   const product = await createApprovedProduct(ctx, options.productOverrides);
 
+  // See LoansService.raiseApplication's own comment — a consent code, sent
+  // to (and recovered from, via the PendingNotificationLog stub — see
+  // LoanConsentService's own comment) one of the members, is required.
+  const { challengeId: consentChallengeId } = await ctx.loanConsentService.issueChallenge(
+    customerIds[0]!,
+    ctx.INITIATOR_ID,
+  );
+  const consentLog = await ctx.pendingNotificationLogModel
+    .findOne({ recipientCustomerId: new Types.ObjectId(customerIds[0]!) })
+    .sort({ createdAt: -1 })
+    .exec();
+  const consentCode = (consentLog?.payload as { code?: string } | undefined)?.code;
+  if (!consentCode) {
+    throw new Error('raiseApproveVerifyAndDisburseLoan: no consent code found in PendingNotificationLog');
+  }
+
+  const disbursementChannel = options.disbursementChannel ?? DisbursementChannel.TRANSFER;
   const raiseResult = await ctx.loansService.raiseApplication(
     groupId,
     product._id.toString(),
@@ -560,9 +603,16 @@ export async function raiseApproveVerifyAndDisburseLoan(
     customerIds.map((customerId) => ({
       customerId,
       requestedAmountKobo: memberPrincipalKobo,
-      disbursementChannel: DisbursementChannel.TRANSFER,
+      disbursementChannel,
+      bankAccountDetails:
+        disbursementChannel === DisbursementChannel.TRANSFER
+          ? { accountName: 'Test Account', accountNumber: '0123456789', bankName: 'Test Bank' }
+          : undefined,
     })),
     ctx.INITIATOR_ID,
+    consentChallengeId,
+    consentCode,
+    options.purpose,
   );
   const loanId = raiseResult.loan._id.toString();
   await approveLoan(ctx, loanId);

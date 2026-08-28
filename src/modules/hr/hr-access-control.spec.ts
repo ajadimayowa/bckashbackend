@@ -28,6 +28,11 @@ class TestStaffContextGuard implements CanActivate {
     req.staffContext = {
       staffId: (req.headers['x-test-staff-id'] as string) ?? 'actor-1',
       role: (req.headers['x-test-role'] as never) ?? 'MARKETER',
+      // Not exercised by this suite — capabilities come straight off a
+      // header (see this class's own doc comment), bypassing
+      // RbacService.resolveContext's real userType-based filtering
+      // entirely. Just satisfying ResolvedStaffContext's required field.
+      userType: 'Authorizer' as never,
       capabilities: req.headers['x-test-capabilities']
         ? (req.headers['x-test-capabilities'] as string).split(',')
         : [],
