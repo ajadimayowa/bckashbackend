@@ -58,10 +58,18 @@ export const envValidationSchema = Joi.object({
   // When true (or when auth credentials are absent), the mock adapter is used
   // instead of live calls — see bvn.module.ts.
   BVN_QUERY_USE_MOCK: Joi.boolean().default(false),
+  // The provider has no documented SLA and has been observed taking 10s+ on a
+  // slow response — this bounds the worst case so a stalled provider fails
+  // fast instead of stalling the whole verification request indefinitely.
+  BVN_QUERY_TIMEOUT_MS: Joi.number().positive().default(10000),
 
   AWS_REGION: Joi.string().required(),
   AWS_ACCESS_KEY_ID: Joi.string().allow('').optional(),
   AWS_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
+  // Optional override for the S3 bucket's own region when it differs from
+  // AWS_REGION (used for the Rekognition client) — e.g. bucket in eu-west-1,
+  // Rekognition called in eu-west-2. Falls back to AWS_REGION when unset.
+  AWS_S3_REGION: Joi.string().allow('').optional(),
   AWS_S3_BUCKET: Joi.string().required(),
   AWS_S3_SIGNED_URL_EXPIRES_IN: Joi.number().positive().default(900),
   // Mirrors BVN_QUERY_USE_MOCK — forces the in-memory S3 adapter even if

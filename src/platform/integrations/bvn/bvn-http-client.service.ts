@@ -13,6 +13,11 @@ export interface BvnHttpResponse<T> {
 
 const UNAUTHORIZED_STATUSES = [401, 403];
 
+/** `AbortSignal.timeout()` rejects with a DOMException named "TimeoutError" (Node 18+/undici). */
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'TimeoutError';
+}
+
 /**
  * Shared client for all three BVN endpoints — attaches auth headers via
  * BvnProviderAuthService and don't-repeat-yourself's the "retry once after a
@@ -62,15 +67,21 @@ export class BvnHttpClient {
     body: unknown,
     authHeaders: BvnAuthHeaders,
   ): Promise<BvnHttpResponse<T>> {
+    const timeoutMs = this.configService.get<BvnConfig>('bvn')?.requestTimeoutMs ?? 10000;
     let response: Response;
     try {
       response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify(body),
+        // Unbounded otherwise — the provider has no documented SLA and has
+        // been observed taking 10s+ per call, which can stall the whole
+        // verification request past any caller's own timeout.
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new BvnProviderUnavailableException(url, (err as Error).message);
+      const message = isAbortError(err) ? `timed out after ${timeoutMs}ms` : (err as Error).message;
+      throw new BvnProviderUnavailableException(url, message);
     }
 
     let parsed: T;

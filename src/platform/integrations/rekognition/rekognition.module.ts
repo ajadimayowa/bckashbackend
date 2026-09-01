@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import type { AwsConfig } from '../../../common/config/configuration';
+import { S3IntegrationModule } from '../s3/s3.module';
 import { FaceComparisonCallLogService } from './face-comparison-call-log.service';
 import { FACE_COMPARISON_ADAPTER } from './interfaces/face-comparison-adapter.interface';
 import { MockRekognitionAdapter } from './mock-rekognition.adapter';
@@ -17,6 +18,7 @@ import {
     MongooseModule.forFeature([
       { name: FaceComparisonCallLog.name, schema: FaceComparisonCallLogSchema },
     ]),
+    S3IntegrationModule,
   ],
   providers: [
     FaceComparisonCallLogService,

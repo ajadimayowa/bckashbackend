@@ -19,6 +19,14 @@ export class MockS3Service implements S3Adapter {
     return Promise.resolve(`mock://s3/${key}?expiresIn=${expiresInSeconds}`);
   }
 
+  getObjectBytes(key: string): Promise<Buffer> {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return Promise.reject(new Error(`mock S3: no object stored for key "${key}"`));
+    }
+    return Promise.resolve(entry.buffer);
+  }
+
   delete(key: string): Promise<void> {
     this.store.delete(key);
     return Promise.resolve();

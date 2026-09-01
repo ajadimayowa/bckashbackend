@@ -13,6 +13,15 @@ export interface S3UploadResult {
 export interface S3Adapter {
   upload(key: string, buffer: Buffer, contentType: string): Promise<S3UploadResult>;
   getSignedReadUrl(key: string, expiresInSeconds?: number): Promise<string>;
+  /**
+   * Downloads an object's raw bytes into memory. Used by callers (e.g. the
+   * Rekognition adapter) that need to hand AWS the object's `Bytes` directly
+   * instead of an `S3Object` reference — that avoids Rekognition's requirement
+   * that the bucket live in the same region as the Rekognition API being
+   * called. Only for small objects (KYC/biometric images); never used for
+   * anything large enough to matter in memory.
+   */
+  getObjectBytes(key: string): Promise<Buffer>;
   delete(key: string): Promise<void>;
 }
 

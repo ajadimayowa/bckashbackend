@@ -83,16 +83,23 @@ export class BvnProviderAuthService {
       );
     }
 
+    const timeoutMs = bvnConfig?.requestTimeoutMs ?? 10000;
     let response: Response;
     try {
       response = await fetch(`${baseUrl}/initialisation/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ Email: email, Password: password }),
+        // See BvnHttpClient.send — same unbounded-latency concern applies here.
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      await this.logCall(false, null, `network error: ${(err as Error).message}`);
-      throw new BvnProviderUnavailableException('authentication', (err as Error).message);
+      const message =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? `timed out after ${timeoutMs}ms`
+          : (err as Error).message;
+      await this.logCall(false, null, `network error: ${message}`);
+      throw new BvnProviderUnavailableException('authentication', message);
     }
 
     let body: BvnLoginResponseBody;

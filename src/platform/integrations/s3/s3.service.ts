@@ -50,7 +50,17 @@ export class S3Service implements S3Adapter {
   constructor(private readonly configService: ConfigService) {
     const awsConfig = this.configService.get<AwsConfig>('aws');
     this.client = new S3Client({
-      region: awsConfig?.region,
+      // `s3.region` is the bucket's own region — it can differ from the
+      // top-level `region` used for Rekognition (see AWS_S3_REGION doc in
+      // env.validation.ts). `followRegionRedirects` is a safety net on top of
+      // that: if this region is ever wrong anyway, the SDK resolves the
+      // bucket's real region from S3's PermanentRedirect response and retries
+      // instead of failing outright. Note this only covers requests the SDK
+      // sends itself (get/put/delete below) — a pre-signed URL is computed
+      // up front and does NOT get this fallback, so `getSignedReadUrl` still
+      // needs the region to be correct.
+      region: awsConfig?.s3.region || awsConfig?.region,
+      followRegionRedirects: true,
       credentials:
         awsConfig?.accessKeyId && awsConfig.secretAccessKey
           ? { accessKeyId: awsConfig.accessKeyId, secretAccessKey: awsConfig.secretAccessKey }
@@ -85,6 +95,21 @@ export class S3Service implements S3Adapter {
       });
     } catch (err) {
       throw new S3StorageUnavailableException(`signed URL generation (bucket "${this.bucket}")`, describeS3Error(err));
+    }
+  }
+
+  async getObjectBytes(key: string): Promise<Buffer> {
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const bytes = await response.Body?.transformToByteArray();
+      if (!bytes) {
+        throw new Error('empty response body');
+      }
+      return Buffer.from(bytes);
+    } catch (err) {
+      throw new S3StorageUnavailableException(`object download (bucket "${this.bucket}")`, describeS3Error(err));
     }
   }
 

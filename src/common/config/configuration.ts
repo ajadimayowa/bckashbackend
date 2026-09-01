@@ -67,6 +67,8 @@ export interface BvnConfig {
   authEmail?: string;
   authPassword?: string;
   useMock: boolean;
+  /** Per-request timeout for calls to the BVN provider — it has no SLA of its own, and without one a slow/unresponsive provider can stall the whole verification request past any caller's own timeout. */
+  requestTimeoutMs: number;
 }
 
 export interface AwsConfig {
@@ -75,6 +77,8 @@ export interface AwsConfig {
   secretAccessKey?: string;
   s3: {
     bucket: string;
+    /** Bucket's own region, when it differs from `region` (used for Rekognition). Falls back to `region` when unset. */
+    region: string;
     signedUrlExpiresInSeconds: number;
     useMock: boolean;
   };
@@ -253,6 +257,7 @@ export default (): RootConfig => {
         process.env.BVN_QUERY_USE_MOCK === 'true' ||
         !process.env.BVN_QUERY_AUTH_EMAIL ||
         !process.env.BVN_QUERY_AUTH_PASSWORD,
+      requestTimeoutMs: parseInt(process.env.BVN_QUERY_TIMEOUT_MS ?? '10000', 10),
     },
     aws: {
       region: process.env.AWS_REGION ?? '',
@@ -260,6 +265,7 @@ export default (): RootConfig => {
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || undefined,
       s3: {
         bucket: process.env.AWS_S3_BUCKET ?? '',
+        region: process.env.AWS_S3_REGION || process.env.AWS_REGION || '',
         signedUrlExpiresInSeconds: parseInt(process.env.AWS_S3_SIGNED_URL_EXPIRES_IN ?? '900', 10),
         useMock:
           process.env.AWS_S3_USE_MOCK === 'true' ||

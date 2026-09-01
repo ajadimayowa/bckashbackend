@@ -66,12 +66,8 @@ export class AuthService {
     );
     return { accessToken, refreshToken };
   }
-
-  /** Validates credentials + status, then issues an OTP challenge — no tokens yet. */
   async login(email: string, password: string): Promise<LoginChallengeResponse> {
     const staff = await this.staffService.findByEmailWithPassword(email);
-    // Same generic message whether the email doesn't exist or the password is
-    // wrong — don't let login responses be used to enumerate valid accounts.
     if (!staff) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -81,9 +77,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Distinct from the above — status is a real, intentional signal, not a
-    // credential check. A disabled/pending account fails here even with the
-    // correct password.
     if (staff.status !== StaffStatus.ACTIVE) {
       throw new UnauthorizedException(`Account is not active (status: ${staff.status})`);
     }
